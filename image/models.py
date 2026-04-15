@@ -14,8 +14,14 @@ class ScenePrompt(BaseModel):
     text_segment: str = Field(..., description="Source text segment this scene represents.")
     prompt: str = Field(..., min_length=1, description="Positive prompt for SDXL.")
     negative_prompt: str = Field(
-        "low quality, blurry, text, watermark, logo, bright, cheerful, cartoon",
-        description="Negative prompt for SDXL.",
+        (
+            "people, humans, faces, characters, person, man, woman, child, "
+            "figure, portrait, body, hands, eyes, "
+            "low quality, blurry, text, watermark, logo, signature, "
+            "bright, cheerful, cartoon, anime, 3d render, cgi, "
+            "artificial, digital art, computer generated, pixelated"
+        ),
+        description="Negative prompt for SDXL (enforces background-only, painting style).",
     )
 
 
@@ -77,3 +83,25 @@ class ImageJobStatusResponse(BaseModel):
     progress_total: int = 0
     result: Optional[ImageGenResponse] = None
     error: Optional[str] = None
+
+
+class ChunkBasedImageGenRequest(BaseModel):
+    """Request for chunk-based image generation (post-TTS workflow)."""
+    chunks: List[str] = Field(..., min_length=1, description="TTS text chunks to group and generate images for.")
+    chunks_per_group: int = Field(
+        5, ge=1, le=10, description="Target number of chunks to group together per image."
+    )
+    style: ImageStyle = Field(ImageStyle.DARK_ATMOSPHERIC, description="Visual style preset.")
+    width: int = Field(1024, ge=512, le=2048, description="Output image width in pixels.")
+    height: int = Field(1024, ge=512, le=2048, description="Output image height in pixels.")
+    steps: Optional[int] = Field(None, ge=1, le=100, description="Override inference steps.")
+    guidance_scale: Optional[float] = Field(None, ge=1.0, le=30.0, description="Override CFG scale.")
+    seed: Optional[int] = Field(None, ge=0, description="Random seed for reproducibility.")
+    run_label: Optional[str] = Field(None, description="Optional label for the output directory.")
+
+
+class ChunkGroupPreviewResponse(BaseModel):
+    """Preview of chunk grouping without generating images."""
+    chunk_groups: List[dict] = Field(..., description="List of chunk groups with background descriptions.")
+    total_groups: int = Field(..., description="Total number of groups created.")
+    chunks_processed: int = Field(..., description="Total number of chunks processed.")

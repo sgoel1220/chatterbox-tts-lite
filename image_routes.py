@@ -23,6 +23,8 @@ from image.engine import (
     unload_image_model,
 )
 from image.models import (
+    ChunkBasedImageGenRequest,
+    ChunkGroupPreviewResponse,
     ImageGenRequest,
     ImageGenResponse,
     ImageJobCreatedResponse,
@@ -31,7 +33,8 @@ from image.models import (
     SavedImageArtifact,
     ScenePrompt,
 )
-from image.prompts import extract_scene_prompts
+from image.chunk_grouper import group_chunks_for_images
+from image.prompts import chunk_groups_to_scene_prompts, extract_scene_prompts
 from text.normalization import _unload_model as unload_qwen_model
 from job_store import job_store
 from text.chunking import sanitize_filename
@@ -273,4 +276,129 @@ async def preview_prompts(request: PromptPreviewRequest) -> list[ScenePrompt]:
         raise
     except Exception as exc:
         logger.error("Prompt preview failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Chunk-based image generation (post-TTS workflow)
+# ---------------------------------------------------------------------------
+
+@image_router.post("/chunks/preview", response_model=ChunkGroupPreviewResponse)
+async def preview_chunk_groups(request: ChunkBasedImageGenRequest) -> ChunkGroupPreviewResponse:
+    """Preview how TTS chunks will be grouped for background images."""
+    try:
+        chunk_groups = group_chunks_for_images(
+            chunks=request.chunks,
+            chunks_per_group=request.chunks_per_group,
+        )
+        if not chunk_groups:
+            raise HTTPException(status_code=400, detail="No chunk groups could be created.")
+
+        return ChunkGroupPreviewResponse(
+            chunk_groups=[
+                {
+                    "group_index": g.group_index,
+                    "chunk_indices": g.chunk_indices,
+                    "background_description": g.background_description,
+                    "num_chunks": len(g.chunk_indices),
+                }
+                for g in chunk_groups
+            ],
+            total_groups=len(chunk_groups),
+            chunks_processed=len(request.chunks),
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Chunk group preview failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@image_router.post("/chunks/generate", response_model=ImageGenResponse)
+async def generate_images_from_chunks(request: ChunkBasedImageGenRequest) -> ImageGenResponse:
+    """Generate background images from TTS chunks (synchronous).
+
+    This is the primary workflow for creepy pasta videos:
+    1. TTS generates audio chunks
+    2. LLM groups 5-6 chunks together based on scene/setting
+    3. LLM generates background-only scene descriptions (no humans)
+    4. SDXL generates painting-style background images
+    """
+    try:
+        # Step 1: Group chunks using LLM
+        chunk_groups = group_chunks_for_images(
+            chunks=request.chunks,
+            chunks_per_group=request.chunks_per_group,
+        )
+        if not chunk_groups:
+            raise ValueError("No chunk groups could be created from the provided chunks.")
+
+        # Step 2: Convert chunk groups to scene prompts
+        scene_prompts = chunk_groups_to_scene_prompts(
+            chunk_groups=chunk_groups,
+            style=request.style,
+        )
+
+        # Step 3: Build a modified ImageGenRequest for execution
+        image_request = ImageGenRequest(
+            story_text="",  # Not used when manual_prompts provided
+            num_scenes=len(scene_prompts),
+            style=request.style,
+            width=request.width,
+            height=request.height,
+            steps=request.steps,
+            guidance_scale=request.guidance_scale,
+            seed=request.seed,
+            manual_prompts=scene_prompts,
+            run_label=request.run_label or "chunk_based",
+        )
+
+        # Step 4: Execute image generation
+        return _execute_image_gen(image_request)
+
+    except Exception as exc:
+        logger.error("Chunk-based image generation failed: %s", exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@image_router.post("/chunks/jobs", response_model=ImageJobCreatedResponse)
+async def create_chunk_image_job(request: ChunkBasedImageGenRequest) -> ImageJobCreatedResponse:
+    """Create an async chunk-based image generation job."""
+    try:
+        # Build ImageGenRequest from chunk-based request
+        chunk_groups = group_chunks_for_images(
+            chunks=request.chunks,
+            chunks_per_group=request.chunks_per_group,
+        )
+        if not chunk_groups:
+            raise ValueError("No chunk groups could be created.")
+
+        scene_prompts = chunk_groups_to_scene_prompts(
+            chunk_groups=chunk_groups,
+            style=request.style,
+        )
+
+        image_request = ImageGenRequest(
+            story_text="",
+            num_scenes=len(scene_prompts),
+            style=request.style,
+            width=request.width,
+            height=request.height,
+            steps=request.steps,
+            guidance_scale=request.guidance_scale,
+            seed=request.seed,
+            manual_prompts=scene_prompts,
+            run_label=request.run_label or "chunk_based",
+        )
+
+        job_id = uuid.uuid4().hex
+        job_store.create(job_id)
+        threading.Thread(target=_run_image_job, args=(job_id, image_request), daemon=True).start()
+
+        return ImageJobCreatedResponse(
+            job_id=job_id,
+            status_url=f"/api/images/jobs/{job_id}",
+        )
+    except Exception as exc:
+        logger.error("Failed to create chunk-based image job: %s", exc, exc_info=True)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
