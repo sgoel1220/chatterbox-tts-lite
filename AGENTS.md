@@ -64,7 +64,7 @@ The active runtime loop:
 ```bash
 # Install dependencies (also install creepy_pasta_protocol from sibling directory)
 python3 -m pip install -r lite_runpod/requirements.txt
-python3 -m pip install -e ../creepy_pasta_protocol
+python3 -m pip install -e ./creepy_pasta_protocol
 
 # Start the lite server
 python3 lite_clone_server.py
@@ -72,8 +72,8 @@ python3 lite_clone_server.py
 # Syntax-check all modules
 python3 -m py_compile app.py config.py cpu_runtime.py engine.py enums.py files.py job_store.py lite_clone_server.py models.py routes.py routes_history.py run_orchestrator.py utils.py && echo OK
 
-# Type-check persistence layer and protocol (run from workspace root)
-cd .. && python3 -m mypy Chatterbox-TTS-Server/persistence creepy_pasta_protocol/src
+# Type-check persistence layer and protocol (run from repo root)
+python3 -m mypy persistence creepy_pasta_protocol/src
 ```
 
 ## GPU Rules
@@ -83,12 +83,12 @@ cd .. && python3 -m mypy Chatterbox-TTS-Server/persistence creepy_pasta_protocol
 
 ## Deploy on RunPod
 
-Build and push from the **parent directory** (`creepy_pasta/`). The build context must be the parent so the Dockerfile can COPY `creepy_pasta_protocol/`. **Always specify `--platform linux/amd64`** — RunPod runs on amd64 and a Mac arm64 build will fail with "no matching manifest" at pod start.
+Build and push from the **repo root** (`Chatterbox-TTS-Server/`). **Always specify `--platform linux/amd64`** — RunPod runs on amd64 and a Mac arm64 build will fail with "no matching manifest" at pod start.
 
 ```bash
-# Run from creepy_pasta/ (parent of Chatterbox-TTS-Server/)
+# Run from Chatterbox-TTS-Server/ (repo root)
 docker buildx build --platform linux/amd64 \
-  -f Chatterbox-TTS-Server/lite_runpod/Dockerfile \
+  -f lite_runpod/Dockerfile \
   -t shubh67678/chatterbox-lite-runpod:latest \
   -t shubh67678/chatterbox-tts-server:latest \
   --push .
