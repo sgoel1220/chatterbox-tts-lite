@@ -1,7 +1,7 @@
-# Build context: creepy_pasta/ (parent of Chatterbox-TTS-Server/)
-# Build command (from creepy_pasta/):
+# Build context: Chatterbox-TTS-Server/ (repo root)
+# Build command (from Chatterbox-TTS-Server/):
 #   docker buildx build --platform linux/amd64 \
-#     -f Chatterbox-TTS-Server/lite_runpod/Dockerfile \
+#     -f lite_runpod/Dockerfile \
 #     -t shubh67678/chatterbox-lite-runpod:latest --push .
 
 FROM docker.io/nvidia/cuda:12.1.1-runtime-ubuntu22.04
@@ -35,12 +35,12 @@ RUN ln -sf /usr/bin/python3 /usr/bin/python
 
 WORKDIR /app
 
-COPY Chatterbox-TTS-Server/lite_runpod/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+COPY lite_runpod/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-COPY Chatterbox-TTS-Server/lite_runpod/requirements.txt /tmp/requirements.txt
+COPY lite_runpod/requirements.txt /tmp/requirements.txt
 
-# Install creepy_pasta_protocol (sibling package, requires parent build context)
+# Install creepy_pasta_protocol (sibling package within repo)
 COPY creepy_pasta_protocol /tmp/creepy_pasta_protocol
 RUN python -m pip install --no-cache-dir -e /tmp/creepy_pasta_protocol
 
@@ -50,13 +50,13 @@ RUN python -m pip install --no-cache-dir --upgrade pip && \
     python -m pip install --no-cache-dir "protobuf>=4.25.0" && \
     python -m pip install --no-cache-dir git+https://github.com/huggingface/diffusers
 
-COPY Chatterbox-TTS-Server/lite_runpod/config.yaml /app/config.yaml
-COPY Chatterbox-TTS-Server/app.py Chatterbox-TTS-Server/config.py Chatterbox-TTS-Server/cpu_runtime.py Chatterbox-TTS-Server/engine.py Chatterbox-TTS-Server/enums.py Chatterbox-TTS-Server/files.py Chatterbox-TTS-Server/image_routes.py Chatterbox-TTS-Server/job_store.py Chatterbox-TTS-Server/lite_clone_server.py Chatterbox-TTS-Server/models.py Chatterbox-TTS-Server/routes.py Chatterbox-TTS-Server/routes_history.py Chatterbox-TTS-Server/run_orchestrator.py Chatterbox-TTS-Server/utils.py /app/
-COPY Chatterbox-TTS-Server/audio /app/audio
-COPY Chatterbox-TTS-Server/text /app/text
-COPY Chatterbox-TTS-Server/image /app/image
-COPY Chatterbox-TTS-Server/lite_ui /app/lite_ui
-COPY Chatterbox-TTS-Server/persistence /app/persistence
+COPY lite_runpod/config.yaml /app/config.yaml
+COPY app.py config.py cpu_runtime.py engine.py enums.py files.py image_routes.py job_store.py lite_clone_server.py models.py routes.py routes_history.py run_orchestrator.py utils.py /app/
+COPY audio /app/audio
+COPY text /app/text
+COPY image /app/image
+COPY lite_ui /app/lite_ui
+COPY persistence /app/persistence
 
 RUN mkdir -p /app/model_cache /app/reference_audio /app/outputs /app/logs /app/hf_cache /app/voices
 
