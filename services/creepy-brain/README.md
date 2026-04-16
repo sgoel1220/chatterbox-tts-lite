@@ -29,11 +29,18 @@ This service uses Hatchet for workflow orchestration and provides a unified API 
 ### Running with Docker
 
 ```bash
-# Start the service and postgres
+# 1. Create .env from example and fill in ANTHROPIC_API_KEY
+cp .env.example .env
+# Edit .env: set ANTHROPIC_API_KEY=sk-ant-...
+
+# 2. Start the service and postgres
 docker-compose up
 
 # The service will be available at http://localhost:8006
 ```
+
+> Story generation requires `ANTHROPIC_API_KEY` in `.env`. Without it the generate
+> endpoint returns 202 but background generation will fail with status `failed`.
 
 ### Local Development
 
@@ -41,10 +48,12 @@ docker-compose up
 # Install dependencies
 pip install -e .
 
-# Copy environment file
+# Copy environment file and set your API key
 cp .env.example .env
+# Edit .env: set ANTHROPIC_API_KEY=sk-ant-...
+# .env.example uses POSTGRES_PORT=5433 to match the docker-compose host mapping
 
-# Start postgres separately or use docker-compose for just postgres
+# Start postgres via docker-compose (listens on host port 5433)
 docker-compose up postgres
 
 # Run the app
@@ -53,8 +62,28 @@ uvicorn app.main:app --host 0.0.0.0 --port 8006 --reload
 
 ## API Endpoints
 
+### Infrastructure
 - `GET /` - Service info
-- `GET /health` - Health check endpoint (returns `{"status": "ok"}`)
+- `GET /health` - Health check (`{"status": "ok"}`)
+- `GET /metrics` - Prometheus metrics
+
+### Voices
+- `POST /api/voices` - Upload reference audio (multipart form)
+- `GET /api/voices` - List all voices
+
+### Runs
+- `POST /api/runs` - Create a TTS run record
+- `GET /api/runs` - List runs (supports `?limit=&offset=`)
+- `GET /api/runs/{run_id}` - Get run by ID
+- `PATCH /api/runs/{run_id}` - Update run status/result
+
+### Blobs
+- `GET /api/blobs/{blob_id}` - Download audio blob
+
+### Stories
+- `POST /api/stories/generate` - Start background story generation (returns 202)
+- `GET /api/stories/{story_id}` - Poll story status and acts
+- `GET /api/stories` - List stories (supports `?limit=&offset=`)
 
 ## Environment Variables
 
@@ -67,33 +96,32 @@ Key settings:
 - `POSTGRES_DB` - Database name
 - `POSTGRES_USER` - Database user
 - `POSTGRES_PASSWORD` - Database password
+- `ANTHROPIC_API_KEY` - API key for story generation
+- `JSON_LOGS` - `true` for JSON logs (production), `false` for pretty logs (dev)
 
 ## Development Roadmap
 
-### Phase 1: Scaffold (✓ Current)
-- Basic FastAPI structure
-- PostgreSQL setup
-- Health endpoints
+### Phase 1: Foundation (✓ Complete)
+- FastAPI service scaffold with PostgreSQL + SQLAlchemy async
+- SQLAlchemy models and Alembic migrations (Voice, Run, Blob, Story, StoryAct, Workflow)
+- Full metadata-server parity: voices, runs, blobs CRUD
+- Full story-engine parity: generate, poll, list stories
+- Structured logging (structlog), Prometheus metrics
+- Docker Compose setup (service + postgres)
 
-### Phase 2: Database Models
-- SQLAlchemy models
-- Alembic migrations
-- Core entities (Workflow, Story, Run, etc.)
+### Phase 2: Hatchet Integration (Next)
+- Add Hatchet engine to Docker Compose
+- GPU provider abstraction (RunPod + local dev)
+- ContentPipeline workflow definition
+- Step implementations: generate_story, tts_synthesis, image_generation, stitch_final
+- Workflow API endpoints
 
-### Phase 3: Hatchet Integration
-- Workflow definitions
-- Step implementations
-- GPU pod management
-
-### Phase 4: API Layer
-- Workflow CRUD endpoints
-- Run execution endpoints
-- Status and monitoring
-
-### Phase 5: Observability
-- Structured logging
-- Prometheus metrics
-- Slack/Discord alerts
+### Phase 3: Hardening
+- Recon cron job for orphaned GPU pods
+- On-failure cleanup hooks
+- Cost tracking and alerts
+- Workflow-level timeouts
+- Comprehensive tests
 
 ## Contributing
 
