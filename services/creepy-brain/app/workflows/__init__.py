@@ -19,6 +19,6 @@ hatchet = Hatchet()
 # Populated by importing workflow modules below.
 WORKFLOWS: list[BaseWorkflow[Any]] = []
 
-# Register workflows as they are created, e.g.:
-#   from .content_pipeline import content_pipeline
-#   WORKFLOWS.append(content_pipeline)
+# Register workflows by importing their modules.
+# Each module appends its workflow instance to WORKFLOWS on import.
+from . import test_workflow as _test_workflow  # noqa: F401

@@ -14,7 +14,7 @@ from app.config import settings
 from app.db import close_db, init_db
 from app.logging import configure_logging
 from app.middleware import RequestContextMiddleware
-from app.routes import blobs, health, runs, voices
+from app.routes import blobs, health, runs, voices, workflows
 
 logger = structlog.get_logger()
 
@@ -64,6 +64,7 @@ def create_app() -> FastAPI:
     app.include_router(runs.router)
     app.include_router(voices.router)
     app.include_router(blobs.router)
+    app.include_router(workflows.router)
 
     from app.routes.stories import router as stories_router
     app.include_router(stories_router)
