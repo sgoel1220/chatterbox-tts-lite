@@ -72,7 +72,8 @@ async def _call_with_retry(
             else:
                 log.error("API call failed after %d attempts", MAX_RETRIES)
 
-    assert last_exc is not None
+    if last_exc is None:
+        raise RuntimeError("retry loop exited without raising an exception")
     raise last_exc
 
 
