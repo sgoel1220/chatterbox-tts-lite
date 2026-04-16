@@ -111,6 +111,7 @@ async def generate_story(
 
     svc = StoryService(session)
     story = await svc.create(body.premise)
+    await session.commit()  # route owns the transaction boundary
 
     async def _run() -> None:
         from app.db import async_session_maker
@@ -128,6 +129,7 @@ async def generate_story(
                 try:
                     async with async_session_maker() as fail_session:
                         await StoryService(fail_session).fail_story(story.id)
+                        await fail_session.commit()
                 except Exception:
                     log.exception("pipeline_fail_status_update_failed", story_id=str(story.id))
 

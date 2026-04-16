@@ -43,6 +43,7 @@ async def run_pipeline(
 
     try:
         await svc.update_status(story_id, StoryStatus.GENERATING)
+        await session.commit()
 
         # ── Step 1: Architect ────────────────────────────────────────
         arch_output = await architect.run(premise)
@@ -55,6 +56,7 @@ async def run_pipeline(
             outline_json=outline.model_dump(mode="json"),
             title=bible.title,
         )
+        await session.commit()
 
         # ── Step 2: Outline review (max 2 loops) ────────────────────
         for outline_loop in range(MAX_OUTLINE_LOOPS):
@@ -83,6 +85,7 @@ async def run_pipeline(
                 outline_json=outline.model_dump(mode="json"),
                 title=bible.title,
             )
+            await session.commit()
 
         # ── Step 3: Write acts + inline checks ──────────────────────
         acts: list[ActDraft] = []
@@ -106,9 +109,11 @@ async def run_pipeline(
                 content=draft.text,
                 word_count=draft.word_count,
             )
+            await session.commit()
 
         # ── Step 4: Full story review loop ───────────────────────────
         await svc.update_status(story_id, StoryStatus.REVIEWING)
+        await session.commit()
 
         for review_loop in range(MAX_REVIEW_LOOPS):
             review = await reviewer.review_full_story(bible, outline, acts)
@@ -162,16 +167,19 @@ async def run_pipeline(
                     content=new_text,
                     word_count=len(new_text.split()),
                 )
+                await session.commit()
 
         # ── Done ─────────────────────────────────────────────────────
         total_words = sum(a.word_count for a in acts)
         full_text = "\n\n".join(a.text for a in acts)
         await svc.complete_story(story_id, full_text=full_text, word_count=total_words)
+        await session.commit()
         log.info("pipeline complete for story %s", story_id)
 
     except Exception:
         log.exception("pipeline failed for story %s", story_id)
         try:
             await svc.fail_story(story_id)
+            await session.commit()
         except Exception:
             log.exception("failed to mark story %s as failed", story_id)
