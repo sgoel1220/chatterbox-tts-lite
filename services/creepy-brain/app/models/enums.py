@@ -72,6 +72,7 @@ class BlobType(str, Enum):
     FINAL_AUDIO = "final_audio"
     IMAGE = "image"
     FINAL_VIDEO = "final_video"
+    VOICE_AUDIO = "voice_audio"
 
 
 class StoryStatus(str, Enum):

@@ -10,6 +10,7 @@ from app.config import settings
 from app.db import close_db, init_db
 from app.logging import configure_logging
 from app.middleware import RequestContextMiddleware
+from app.routes import blobs, health, runs, voices
 from app.schemas import HealthResponse, ServiceInfo
 
 logger = structlog.get_logger()
@@ -48,6 +49,12 @@ def create_app() -> FastAPI:
 
     # Add request context middleware
     app.add_middleware(RequestContextMiddleware)
+
+    # Register API routers
+    app.include_router(health.router)
+    app.include_router(runs.router)
+    app.include_router(voices.router)
+    app.include_router(blobs.router)
 
     @app.get("/health")
     async def health_check() -> HealthResponse:
