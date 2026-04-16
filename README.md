@@ -22,6 +22,29 @@ python lite_clone_server.py
 # UI at http://localhost:8005
 ```
 
+## Full Stack Docker Compose
+
+From the repo root:
+
+```bash
+cp .env.example .env
+# Edit .env with real API keys and passwords.
+docker compose up --build
+```
+
+This builds and starts `tts-server`, `metadata-server`, `story-engine`, `creepy-brain`,
+Postgres for metadata, Postgres for creepy-brain, and Hatchet.
+
+Default ports:
+
+| Service | URL |
+|---------|-----|
+| TTS server | http://localhost:8005 |
+| Metadata server | http://localhost:8080 |
+| Story engine | http://localhost:8090 |
+| Creepy Brain | http://localhost:8006 |
+| Hatchet dashboard | http://localhost:8888 |
+
 ## Deploy on RunPod
 
 Build from `lite_runpod/Dockerfile`. Always specify `--platform linux/amd64` for RunPod.

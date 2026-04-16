@@ -1,0 +1,185 @@
+services:
+  metadata-postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: metadata
+      POSTGRES_USER: metadata
+      POSTGRES_PASSWORD: ${METADATA_POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - metadata_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U metadata"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  metadata-svc:
+    build:
+      context: .
+      dockerfile: services/metadata-server/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      metadata-postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://metadata:${METADATA_POSTGRES_PASSWORD:-changeme}@metadata-postgres:5432/metadata
+      METADATA_API_KEY: ${METADATA_API_KEY:-changeme}
+      AUDIO_STORAGE_ROOT: /data/audio
+      LISTEN_HOST: 0.0.0.0
+      LISTEN_PORT: 8080
+    ports:
+      - "${METADATA_LISTEN_PORT:-8080}:8080"
+    volumes:
+      - metadata_audio_data:/data/audio
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=2)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  story-engine:
+    build:
+      context: .
+      dockerfile: services/story-engine/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      metadata-svc:
+        condition: service_healthy
+    environment:
+      METADATA_SERVER_URL: http://metadata-svc:8080
+      METADATA_API_KEY: ${METADATA_API_KEY:-changeme}
+      STORY_ENGINE_API_KEY: ${STORY_ENGINE_API_KEY:-changeme}
+      LISTEN_HOST: 0.0.0.0
+      LISTEN_PORT: 8081
+      MAX_CONCURRENT_GENERATIONS: ${STORY_ENGINE_MAX_CONCURRENT_GENERATIONS:-2}
+    ports:
+      - "${STORY_ENGINE_LISTEN_PORT:-8090}:8081"
+
+  tts-server:
+    build:
+      context: .
+      dockerfile: services/tts-server/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      metadata-svc:
+        condition: service_healthy
+    environment:
+      METADATA_API_URL: http://metadata-svc:8080
+      METADATA_API_KEY: ${METADATA_API_KEY:-changeme}
+      HF_HOME: /app/hf_cache
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    ports:
+      - "${TTS_LISTEN_PORT:-8005}:8005"
+    volumes:
+      - tts_model_cache:/app/model_cache
+      - tts_reference_audio:/app/reference_audio
+      - tts_outputs:/app/outputs
+      - tts_logs:/app/logs
+      - tts_hf_cache:/app/hf_cache
+      - tts_voices:/app/voices
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  creepy-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: creepy_brain
+      POSTGRES_PASSWORD: ${CREEPY_POSTGRES_PASSWORD:-dev_password}
+      POSTGRES_DB: creepy_brain
+    volumes:
+      - creepy_pg_data:/var/lib/postgresql/data
+      - ./services/creepy-brain/postgres/init-hatchet.sql:/docker-entrypoint-initdb.d/init-hatchet.sql:ro
+    ports:
+      - "${CREEPY_POSTGRES_LISTEN_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U creepy_brain"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  hatchet-setup:
+    image: postgres:16-alpine
+    command: >
+      sh -c "psql postgresql://creepy_brain:${CREEPY_POSTGRES_PASSWORD:-dev_password}@creepy-postgres:5432/creepy_brain
+      -f /ensure-hatchet.sql"
+    volumes:
+      - ./services/creepy-brain/postgres/ensure-hatchet.sql:/ensure-hatchet.sql:ro
+    depends_on:
+      creepy-postgres:
+        condition: service_healthy
+    restart: on-failure
+
+  hatchet-engine:
+    image: ghcr.io/hatchet-dev/hatchet/hatchet-lite:latest
+    environment:
+      DATABASE_URL: postgresql://hatchet:hatchet@creepy-postgres:5432/hatchet
+      SERVER_AUTH_COOKIE_SECRETS: "${HATCHET_COOKIE_SECRETS:-devtokensecret16 devtokensecret32}"
+      SERVER_AUTH_COOKIE_DOMAIN: localhost
+      SERVER_GRPC_BROADCAST_ADDRESS: hatchet-engine:7070
+      SERVER_URL: http://localhost:8888
+    ports:
+      - "127.0.0.1:${HATCHET_DASHBOARD_PORT:-8888}:8888"
+      - "127.0.0.1:${HATCHET_GRPC_PORT:-7070}:7070"
+    volumes:
+      - hatchet_data:/hatchet/config
+    depends_on:
+      hatchet-setup:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/api/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+    restart: unless-stopped
+
+  creepy-brain:
+    build:
+      context: ./services/creepy-brain
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+      - path: services/creepy-brain/.env
+        required: false
+    depends_on:
+      creepy-postgres:
+        condition: service_healthy
+      hatchet-engine:
+        condition: service_started
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8006
+      POSTGRES_HOST: creepy-postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: creepy_brain
+      POSTGRES_PASSWORD: ${CREEPY_POSTGRES_PASSWORD:-dev_password}
+      POSTGRES_DB: creepy_brain
+    ports:
+      - "${CREEPY_BRAIN_LISTEN_PORT:-8006}:8006"
+
+volumes:
+  metadata_pg_data:
+  metadata_audio_data:
+  tts_model_cache:
+  tts_reference_audio:
+  tts_outputs:
+  tts_logs:
+  tts_hf_cache:
+  tts_voices:
+  creepy_pg_data:
+  hatchet_data:
