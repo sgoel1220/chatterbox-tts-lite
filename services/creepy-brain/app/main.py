@@ -53,11 +53,10 @@ def create_app() -> FastAPI:
     # Add request context middleware
     app.add_middleware(RequestContextMiddleware)
 
-    # Register API routers
-    app.include_router(health.router)
-    app.include_router(runs.router)
-    app.include_router(voices.router)
-    app.include_router(blobs.router)
+    # Register routers
+    from app.routes.stories import router as stories_router
+
+    app.include_router(stories_router)
 
     @app.get("/health")
     async def health_check() -> HealthResponse:
