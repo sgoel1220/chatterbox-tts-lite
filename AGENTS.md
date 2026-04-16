@@ -159,8 +159,13 @@ When implementing beads (work items tracked in the `.beads/` system), **ALWAYS**
    - Avoid over-engineering, premature abstractions, or unnecessary complexity
    - Write clear, straightforward code
 5. **Test** - Thoroughly verify everything works
-6. **Commit** - Create a proper git commit with descriptive message
-7. **Merge** - Exit worktree and merge branch back to main:
+6. **Adversarial review** - MANDATORY: inside the worktree, run `/codex:adversarial-review` in the **foreground** (never background):
+   - Wait for the review to complete — do NOT proceed while it is still running
+   - Implement every actionable finding in the worktree before moving on
+   - If findings conflict with the bead's intent, stop and ASK — do not silently ignore them
+   - Re-test after applying review fixes
+7. **Commit** - Create a proper git commit with descriptive message (review fixes may be the same commit or a follow-up commit in the worktree)
+8. **Merge** - Exit worktree and merge branch back to main:
    ```bash
    ExitWorktree(action="keep")
    git merge worktree-<name> --no-edit
@@ -168,8 +173,15 @@ When implementing beads (work items tracked in the `.beads/` system), **ALWAYS**
    - If merge conflicts occur, resolve them carefully
    - Test again after resolving conflicts
    - Complete the merge before proceeding
-8. **Mark done** - Close the bead with `mcp__beads__close` ONLY after successful merge
-9. **Push** - Push changes to remote with `git push origin main`
+9. **Mark done** - Close the bead with `mcp__beads__close` ONLY after successful merge
+10. **Push** - Push changes to remote with `git push origin main`
+11. **Delete the worktree branch** - ONLY after `git push` succeeds:
+    ```bash
+    git branch -d worktree-<name>          # local branch
+    git worktree prune                      # clean any stale worktree entries
+    ```
+    - Use `-d` (safe delete), not `-D`, so git refuses if the branch isn't merged
+    - If the branch has an upstream on origin, also delete it: `git push origin --delete worktree-<name>`
 
 **CRITICAL RULES:**
 - NEVER pick a bead with status "in_progress" - another agent is working on it
@@ -178,8 +190,12 @@ When implementing beads (work items tracked in the `.beads/` system), **ALWAYS**
 - NEVER start implementing without understanding the context - review docs first
 - NEVER assume - ASK QUESTIONS if anything is unclear or ambiguous
 - ALWAYS prioritize SIMPLICITY over cleverness or premature optimization
+- NEVER skip `/codex:adversarial-review` - it is a required gate before merging
+- NEVER run `/codex:adversarial-review` in the background - it MUST run in the foreground so its findings are applied before commit/merge
+- NEVER merge before applying adversarial-review findings
 - NEVER mark a bead as done before committing, merging, and pushing
-- Work is NOT complete until `git push` succeeds
+- NEVER delete the worktree branch before `git push origin main` succeeds
+- Work is NOT complete until `git push` succeeds AND the worktree branch is deleted
 - Test thoroughly before committing
 - If merge conflicts occur, resolve them before closing the bead
 - Only close the bead after all changes are successfully pushed to remote
