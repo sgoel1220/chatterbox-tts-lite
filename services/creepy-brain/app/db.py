@@ -1,5 +1,9 @@
 """Database connection and session management."""
 
+from collections.abc import AsyncIterator
+from typing import Annotated
+
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base
 
@@ -39,10 +43,14 @@ async def close_db() -> None:
         await engine.dispose()
 
 
-async def get_session() -> AsyncSession:
+async def get_session() -> AsyncIterator[AsyncSession]:
     """Get async database session. Use as FastAPI dependency."""
     if async_session_maker is None:
         raise RuntimeError("Database not initialized. Call init_db() first.")
 
     async with async_session_maker() as session:
         yield session
+
+
+# FastAPI dependency alias for clean route signatures
+DbSession = Annotated[AsyncSession, Depends(get_session)]

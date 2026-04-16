@@ -1,4 +1,4 @@
-"""Pydantic schemas for API request/response models"""
+"""API schemas (Pydantic request/response models)."""
 
 from pydantic import BaseModel
 
