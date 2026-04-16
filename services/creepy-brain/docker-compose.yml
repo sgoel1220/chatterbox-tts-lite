@@ -1,11 +1,12 @@
-version: '3.8'
-
 services:
   brain:
     build: .
     container_name: creepy-brain
     ports:
       - "8006:8006"
+    env_file:
+      - path: .env
+        required: false  # Falls back to environment block values below
     environment:
       - POSTGRES_HOST=postgres
       - POSTGRES_PORT=5432
@@ -13,6 +14,7 @@ services:
       - POSTGRES_PASSWORD=dev_password
       - POSTGRES_DB=creepy_brain
       # - JSON_LOGS=true  # Set to false for pretty dev logs, true for production JSON
+      # ANTHROPIC_API_KEY and LLM_MODEL are loaded from .env (copy .env.example → .env)
     depends_on:
       postgres:
         condition: service_healthy
