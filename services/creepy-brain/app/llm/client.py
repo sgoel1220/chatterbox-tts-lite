@@ -19,6 +19,15 @@ T = TypeVar("T", bound=BaseModel)
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 5  # seconds
 
+_client: anthropic.AsyncAnthropic | None = None
+
+
+def _get_client() -> anthropic.AsyncAnthropic:
+    global _client
+    if _client is None:
+        _client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+    return _client
+
 
 def _extract_json(raw: str) -> str:
     """Extract JSON from a response that may contain markdown fences or preamble."""
@@ -36,7 +45,7 @@ async def _call_with_retry(
     system: str,
 ) -> str:
     """Make an Anthropic API call with retries on transient failures."""
-    client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+    client = _get_client()
     last_exc: Exception | None = None
 
     for attempt in range(MAX_RETRIES):
