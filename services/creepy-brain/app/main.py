@@ -14,7 +14,7 @@ from app.config import settings
 from app.db import close_db, init_db
 from app.logging import configure_logging
 from app.middleware import RequestContextMiddleware
-from app.routes import blobs, health, runs, voices
+from app.routes import blobs, health, runs, voices, workflows
 
 logger = structlog.get_logger()
 
@@ -56,7 +56,16 @@ def create_app() -> FastAPI:
     # Add request context middleware
     app.add_middleware(RequestContextMiddleware)
 
-    # Register routers
+    # Auto-instrument HTTP metrics and expose /metrics endpoint
+    Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+
+    # Register API routers
+    app.include_router(health.router)
+    app.include_router(runs.router)
+    app.include_router(voices.router)
+    app.include_router(blobs.router)
+    app.include_router(workflows.router)
+
     from app.routes.stories import router as stories_router
 
     app.include_router(stories_router)

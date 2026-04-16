@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8006
     reload: bool = False
+    dev_mode: bool = False  # Enables dev-only endpoints (e.g. /api/workflows/test)
 
     # Logging settings
     json_logs: bool = True  # False for pretty dev logs, True for production JSON
@@ -31,6 +32,9 @@ class Settings(BaseSettings):
 
     # Hatchet workflow engine settings
     hatchet_client_token: str = ""
+
+    # GPU provider settings
+    runpod_api_key: str = ""
 
     # LLM settings
     anthropic_api_key: str = ""

@@ -1,5 +1,12 @@
 """GPU provider abstraction layer."""
 
 from .base import GpuPod, GpuPodSpec, GpuProvider, PodStatus
+from .runpod import RunPodProvider
 
-__all__ = ["GpuProvider", "GpuPodSpec", "GpuPod", "PodStatus"]
+
+def get_provider(api_key: str) -> GpuProvider:
+    """Return the RunPod GPU provider configured with *api_key*."""
+    return RunPodProvider(api_key)
+
+
+__all__ = ["GpuProvider", "GpuPodSpec", "GpuPod", "PodStatus", "RunPodProvider", "get_provider"]
