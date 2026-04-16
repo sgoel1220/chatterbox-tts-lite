@@ -17,10 +17,18 @@ When implementing beads (work items tracked in the `.beads/` system), **ALWAYS**
    EnterWorktree(description="Implement bead XYZ")
    ```
 2. **Pick a bead** - Choose a ready bead (no blockers) using `mcp__beads__ready`
-3. **Implement** - Complete all required changes in the worktree
-4. **Test** - Thoroughly verify everything works
-5. **Commit** - Create a proper git commit with descriptive message
-6. **Merge** - Exit worktree and merge branch back to main:
+3. **Review documentation** - Get high-level understanding BEFORE implementing:
+   - Read `docs/CONTENT_PIPELINE_ORCHESTRATION.md` for architecture context
+   - Review related documentation for the feature area
+   - Understand the "why" behind the implementation
+   - **ASK QUESTIONS** if anything is unclear - NEVER assume
+4. **Implement** - Complete all required changes in the worktree
+   - **Prioritize SIMPLICITY** - choose the simplest solution that works
+   - Avoid over-engineering, premature abstractions, or unnecessary complexity
+   - Write clear, straightforward code
+5. **Test** - Thoroughly verify everything works
+6. **Commit** - Create a proper git commit with descriptive message
+7. **Merge** - Exit worktree and merge branch back to main:
    ```bash
    ExitWorktree(action="keep")
    git merge worktree-<name> --no-edit
@@ -28,11 +36,14 @@ When implementing beads (work items tracked in the `.beads/` system), **ALWAYS**
    - If merge conflicts occur, resolve them carefully
    - Test again after resolving conflicts
    - Complete the merge before proceeding
-7. **Mark done** - Close the bead with `mcp__beads__close` ONLY after successful merge
-8. **Push** - Push changes to remote with `git push origin main`
+8. **Mark done** - Close the bead with `mcp__beads__close` ONLY after successful merge
+9. **Push** - Push changes to remote with `git push origin main`
 
 **CRITICAL RULES:**
 - NEVER make code changes directly on main - ALWAYS use a worktree
+- NEVER start implementing without understanding the context - review docs first
+- NEVER assume - ASK QUESTIONS if anything is unclear or ambiguous
+- ALWAYS prioritize SIMPLICITY over cleverness or premature optimization
 - NEVER mark a bead as done before committing, merging, and pushing
 - Work is NOT complete until `git push` succeeds
 - Test thoroughly before committing
