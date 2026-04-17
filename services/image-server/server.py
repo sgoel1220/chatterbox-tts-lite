@@ -90,9 +90,11 @@ app = FastAPI(
 
 class GenerateRequest(BaseModel):
     prompt: str = Field(..., min_length=1, description="Image prompt.")
+    negative_prompt: str | None = Field(None, description="Negative prompt.")
     width: int = Field(1024, ge=512, le=1536)
     height: int = Field(1024, ge=512, le=1536)
     steps: int = Field(4, ge=1, le=8)  # Lightning: 4 steps optimal
+    guidance_scale: float = Field(2.0, ge=0.0, le=5.0)  # Lightning: 0-2 recommended
     seed: int | None = Field(None, ge=0)
 
 
@@ -131,19 +133,21 @@ def generate(request: GenerateRequest) -> Response:
         generator = torch.Generator(device="cuda").manual_seed(request.seed)
 
     logger.info(
-        "Generating image: steps=%d size=%dx%d seed=%s",
+        "Generating image: steps=%d size=%dx%d guidance=%.1f seed=%s",
         request.steps,
         request.width,
         request.height,
+        request.guidance_scale,
         request.seed,
     )
 
     result = pipe(
         prompt=request.prompt,
+        negative_prompt=request.negative_prompt,
         width=request.width,
         height=request.height,
         num_inference_steps=request.steps,
-        guidance_scale=0.0,
+        guidance_scale=request.guidance_scale,
         generator=generator,
     )
 
