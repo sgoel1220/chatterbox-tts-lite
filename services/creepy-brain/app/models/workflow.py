@@ -67,6 +67,11 @@ class Workflow(BaseModel):
         back_populates="workflow",
         cascade="all, delete-orphan",
     )
+    scenes: Mapped[list["WorkflowScene"]] = relationship(
+        "WorkflowScene",
+        back_populates="workflow",
+        cascade="all, delete-orphan",
+    )
     blobs: Mapped[list["WorkflowBlob"]] = relationship(
         "WorkflowBlob",
         back_populates="workflow",
@@ -121,8 +126,43 @@ class WorkflowStep(BaseModel):
     )
 
 
+
+class WorkflowScene(BaseModel):
+    """Image scene - one per N story chunks (default 7)."""
+
+    __tablename__ = "workflow_scenes"
+
+    workflow_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("workflows.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    scene_index: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # Image prompt (saved before GPU spin-up)
+    image_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    image_negative_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Image generation result
+    image_status: Mapped[ChunkStatus] = mapped_column(
+        SQLEnum(ChunkStatus, native_enum=False, length=20),
+        nullable=False,
+        default=ChunkStatus.PENDING,
+    )
+    image_blob_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    image_completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    workflow: Mapped["Workflow"] = relationship("Workflow", back_populates="scenes")
+    chunks: Mapped[list["WorkflowChunk"]] = relationship("WorkflowChunk", back_populates="scene")
+
+    __table_args__ = (
+        UniqueConstraint("workflow_id", "scene_index"),
+        Index("idx_workflow_scenes_workflow", "workflow_id"),
+    )
+
 class WorkflowChunk(BaseModel):
-    """Chunk-level progress tracking for TTS and image generation."""
+    """Story chunk - one per TTS segment."""
 
     __tablename__ = "workflow_chunks"
 
@@ -144,22 +184,21 @@ class WorkflowChunk(BaseModel):
     tts_duration_sec: Mapped[Optional[float]] = mapped_column(nullable=True)
     tts_completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    # Image fields
-    image_status: Mapped[ChunkStatus] = mapped_column(
-        SQLEnum(ChunkStatus, native_enum=False, length=20),
-        nullable=False,
-        default=ChunkStatus.PENDING,
+    # Link to scene (for image)
+    scene_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("workflow_scenes.id", ondelete="SET NULL"),
+        nullable=True,
     )
-    image_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    image_blob_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
-    image_completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     workflow: Mapped["Workflow"] = relationship("Workflow", back_populates="chunks")
+    scene: Mapped[Optional["WorkflowScene"]] = relationship("WorkflowScene", back_populates="chunks")
 
     __table_args__ = (
         UniqueConstraint("workflow_id", "chunk_index"),
         Index("idx_workflow_chunks_workflow", "workflow_id"),
+        Index("idx_workflow_chunks_scene", "scene_id"),
     )
 
 

@@ -4,15 +4,17 @@ Pipeline:
   1. Check generate_images flag — skip if false
   2. Get chunk texts from workflow_chunks (created by tts_synthesis step)
   3. Group chunks into scenes using group_chunks_into_scenes()
-  4. Spin up image GPU pod (separate from TTS pod)
-  5. Wait for pod ready
-  6. For each scene:
-     a. Generate image prompt via generate_scene_image_prompt(scene.combined_text)
-     b. POST /generate { prompt, negative_prompt, width, height } → PNG bytes
-     c. Save PNG blob to Postgres
-     d. Update all chunks in the scene with the same image_blob_id and image_prompt
-  7. Terminate image pod
-  8. Return scene image blob IDs with chunk mapping
+  4. Generate prompts via LLM and SAVE TO DB (before GPU spin-up)
+     - Create WorkflowScene records with prompt/negative_prompt
+     - Link chunks to their scenes via scene_id FK
+  5. Spin up image GPU pod
+  6. Wait for pod ready
+  7. For each scene (prompts already saved):
+     a. POST /generate { prompt, negative_prompt, width, height } → PNG bytes
+     b. Save PNG blob to Postgres
+     c. Update scene with image_blob_id
+  8. Terminate image pod
+  9. Return scene image blob IDs with chunk mapping
 
 GPU pod contract (stateless /generate endpoint):
   POST /generate
@@ -33,13 +35,15 @@ import app.db as _db
 from app.config import settings
 from app.gpu import GpuPodSpec, get_provider
 from app.llm.image_prompts import generate_scene_image_prompt
-from app.models.enums import BlobType
+from app.models.enums import BlobType, ChunkStatus
 from app.models.schemas import WorkflowInputSchema
+from app.models.workflow import WorkflowScene
 from app.services import blob_service
 from app.services.workflow_service import (
     WorkflowService,
     get_chunks_for_image_step,
     get_optional_workflow_id,
+    get_scenes_for_workflow,
 )
 from app.text.scene_grouping import Scene, group_chunks_into_scenes
 
@@ -95,6 +99,18 @@ class SceneImageResult(BaseModel):
     chunk_indices: list[int] = Field(description="Indices of chunks in this scene")
     image_blob_id: str = Field(description="UUID of the saved PNG blob")
     image_prompt: str = Field(description="SDXL prompt used for generation")
+    image_negative_prompt: str = Field(description="SDXL negative prompt used")
+
+
+class ScenePrompt(BaseModel):
+    """Scene with generated prompt, ready for image generation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scene_index: int = Field(ge=0, description="Zero-based scene index")
+    chunk_indices: list[int] = Field(description="Indices of chunks in this scene")
+    prompt: str = Field(description="SDXL positive prompt")
+    negative_prompt: str = Field(description="SDXL negative prompt")
 
 
 class ImageStepOutput(BaseModel):
@@ -105,39 +121,6 @@ class ImageStepOutput(BaseModel):
     scenes: list[SceneImageResult] = Field(description="Image results per scene")
     pod_id: str = Field(description="GPU pod ID used for generation")
     scene_count: int = Field(ge=0, description="Number of scenes processed")
-
-
-def _scene_resume_result(
-    scene: Scene,
-    chunk_image_blob_map: dict[int, str | None],
-    chunk_image_prompt_map: dict[int, str | None],
-) -> SceneImageResult | None:
-    """Return a SceneImageResult from existing DB data if the scene is fully done.
-
-    A scene is considered fully done only when every chunk in the scene has a
-    non-None ``image_blob_id`` AND all those blob IDs are identical (guaranteeing
-    they were written by a single consistent generation pass for this grouping).
-
-    Returns None if the scene needs (re)generation.
-    """
-    blob_ids: list[str] = []
-    for idx in scene.chunk_indices:
-        blob_id = chunk_image_blob_map.get(idx)
-        if blob_id is None:
-            return None
-        blob_ids.append(blob_id)
-
-    # All chunks must share the same blob to confirm consistent prior generation
-    if len(set(blob_ids)) != 1:
-        return None
-
-    prompt = chunk_image_prompt_map.get(scene.chunk_indices[0]) or ""
-    return SceneImageResult(
-        scene_index=scene.scene_index,
-        chunk_indices=scene.chunk_indices,
-        image_blob_id=blob_ids[0],
-        image_prompt=prompt,
-    )
 
 
 def _image_pod_spec() -> GpuPodSpec:
@@ -152,10 +135,29 @@ def _image_pod_spec() -> GpuPodSpec:
     )
 
 
+def _scene_from_db(db_scene: WorkflowScene, chunk_indices: list[int]) -> SceneImageResult:
+    """Convert a completed DB scene to a SceneImageResult."""
+    return SceneImageResult(
+        scene_index=db_scene.scene_index,
+        chunk_indices=chunk_indices,
+        image_blob_id=str(db_scene.image_blob_id),
+        image_prompt=db_scene.image_prompt or "",
+        image_negative_prompt=db_scene.image_negative_prompt or "",
+    )
+
+
 async def execute(
     input: WorkflowInputSchema, ctx: Context
 ) -> dict[str, object]:
     """Generate images for each scene using an image GPU pod.
+
+    Pipeline:
+      1. Check generate_images flag
+      2. Get chunks from DB, group into scenes
+      3. Generate prompts via LLM and save to DB (BEFORE GPU)
+      4. Spin up GPU pod
+      5. Generate images from saved prompts
+      6. Terminate GPU pod
 
     Args:
         input: Validated workflow input (contains generate_images flag).
@@ -187,6 +189,7 @@ async def execute(
     )
     async with session_maker() as session:
         chunk_data = await get_chunks_for_image_step(session, workflow_id_uuid)
+        existing_scenes = await get_scenes_for_workflow(session, workflow_id_uuid)
 
     if not chunk_data:
         raise ValueError(
@@ -196,16 +199,6 @@ async def execute(
 
     chunk_texts: list[str] = [str(c["text"]) for c in chunk_data]
     log.info("image_generation: %d chunks to group into scenes", len(chunk_texts))
-
-    # Build lookup for already-processed chunks (resume support)
-    chunk_image_blob_map: dict[int, str | None] = {
-        int(str(c["index"])): str(c["image_blob_id"]) if c.get("image_blob_id") else None
-        for c in chunk_data
-    }
-    chunk_image_prompt_map: dict[int, str | None] = {
-        int(str(c["index"])): str(c["image_prompt"]) if c.get("image_prompt") else None
-        for c in chunk_data
-    }
 
     # --- 3. Group chunks into scenes ---
     scenes = group_chunks_into_scenes(
@@ -217,13 +210,20 @@ async def execute(
         settings.chunks_per_scene,
     )
 
-    # --- 4. Check if all scenes already have consistent images (full resume) ---
+    # Build lookup for existing scenes (resume support)
+    existing_scene_map: dict[int, WorkflowScene] = {
+        s.scene_index: s for s in existing_scenes
+    }
+
+    # --- 4. Check for completed scenes (resume) and pending scenes ---
     resumed_results: list[SceneImageResult] = []
     pending_scenes: list[Scene] = []
+
     for scene in scenes:
-        prior = _scene_resume_result(scene, chunk_image_blob_map, chunk_image_prompt_map)
-        if prior is not None:
-            resumed_results.append(prior)
+        db_scene = existing_scene_map.get(scene.scene_index)
+        if db_scene is not None and db_scene.image_status == ChunkStatus.COMPLETED and db_scene.image_blob_id:
+            # Scene already completed
+            resumed_results.append(_scene_from_db(db_scene, scene.chunk_indices))
         else:
             pending_scenes.append(scene)
 
@@ -245,7 +245,15 @@ async def execute(
         len(resumed_results),
     )
 
-    # --- 5. Spin up image GPU pod for pending scenes ---
+    # --- 5. Generate prompts and save to DB (BEFORE GPU spin-up) ---
+    scene_prompts = await _generate_and_save_prompts(
+        scenes=pending_scenes,
+        workflow_id=workflow_id_uuid,
+        existing_scene_map=existing_scene_map,
+    )
+    log.info("image_generation: %d prompts generated and saved", len(scene_prompts))
+
+    # --- 6. Spin up image GPU pod ---
     provider = get_provider(settings.runpod_api_key)
     pod = await provider.create_pod(
         spec=_image_pod_spec(),
@@ -253,7 +261,7 @@ async def execute(
     )
     log.info("image pod created pod_id=%s provider=%s", pod.id, pod.provider)
 
-    # --- 6. Wait for pod ready, then generate pending scene images ---
+    # --- 7. Wait for pod ready, then generate images ---
     try:
         pod = await provider.wait_for_ready(
             pod.id,
@@ -263,14 +271,13 @@ async def execute(
         assert pod.endpoint_url is not None, f"pod {pod.id} ready but has no endpoint_url"
         log.info("image pod ready endpoint=%s", pod.endpoint_url)
 
-        new_results = await _generate_pending_scene_images(
+        new_results = await _generate_images_from_prompts(
             endpoint_url=pod.endpoint_url,
-            scenes=pending_scenes,
-            total_scene_count=len(scenes),
+            scene_prompts=scene_prompts,
             workflow_id=workflow_id_uuid,
         )
     finally:
-        # --- 7. Terminate image pod ---
+        # --- 8. Terminate image pod ---
         try:
             await provider.terminate_pod(pod.id)
             log.info("image pod terminated pod_id=%s", pod.id)
@@ -296,43 +303,121 @@ async def execute(
     return output.model_dump()
 
 
-async def _generate_pending_scene_images(
-    endpoint_url: str,
+async def _generate_and_save_prompts(
     scenes: list[Scene],
-    total_scene_count: int,
+    workflow_id: uuid.UUID,
+    existing_scene_map: dict[int, WorkflowScene],
+) -> list[ScenePrompt]:
+    """Generate image prompts for pending scenes and save to DB.
+
+    This runs BEFORE GPU spin-up to minimize expensive GPU time.
+    Creates WorkflowScene records and links chunks to them.
+
+    Args:
+        scenes: List of Scene objects that need prompt generation.
+        workflow_id: Workflow UUID for DB FK.
+        existing_scene_map: Map of scene_index to existing WorkflowScene (for resume).
+
+    Returns:
+        List of ScenePrompt with prompts ready for image generation.
+    """
+    scene_prompts: list[ScenePrompt] = []
+
+    session_maker = _db.async_session_maker
+    assert session_maker is not None
+
+    for scene in scenes:
+        # Check if scene already has a prompt (partial resume)
+        existing = existing_scene_map.get(scene.scene_index)
+        if existing is not None and existing.image_prompt:
+            # Use existing prompt
+            scene_prompts.append(
+                ScenePrompt(
+                    scene_index=scene.scene_index,
+                    chunk_indices=scene.chunk_indices,
+                    prompt=existing.image_prompt,
+                    negative_prompt=existing.image_negative_prompt or "",
+                )
+            )
+            log.info("scene %d: using existing prompt from DB", scene.scene_index)
+            continue
+
+        # Generate prompt via LLM
+        prompt_result = await generate_scene_image_prompt(scene.combined_text)
+        log.info(
+            "scene %d: generated prompt (%d chars)",
+            scene.scene_index,
+            len(prompt_result.prompt),
+        )
+
+        # Create or update scene record
+        async with session_maker() as session:
+            svc = WorkflowService(session)
+
+            # Create scene and link chunks
+            await svc.get_or_create_scene(
+                workflow_id=workflow_id,
+                scene_index=scene.scene_index,
+                chunk_indices=scene.chunk_indices,
+            )
+
+            # Save prompt
+            await svc.save_scene_prompt(
+                workflow_id=workflow_id,
+                scene_index=scene.scene_index,
+                image_prompt=prompt_result.prompt,
+                image_negative_prompt=prompt_result.negative_prompt,
+            )
+            await session.commit()
+
+        scene_prompts.append(
+            ScenePrompt(
+                scene_index=scene.scene_index,
+                chunk_indices=scene.chunk_indices,
+                prompt=prompt_result.prompt,
+                negative_prompt=prompt_result.negative_prompt,
+            )
+        )
+
+        log.info(
+            "scene %d: created with %d chunks, prompt saved",
+            scene.scene_index,
+            len(scene.chunk_indices),
+        )
+
+    return scene_prompts
+
+
+async def _generate_images_from_prompts(
+    endpoint_url: str,
+    scene_prompts: list[ScenePrompt],
     workflow_id: uuid.UUID,
 ) -> list[SceneImageResult]:
-    """Generate images for scenes that have not yet been completed.
+    """Generate images for scenes using pre-saved prompts.
 
     Args:
         endpoint_url: Base URL of the ready image GPU pod.
-        scenes: Scenes that still need image generation.
-        total_scene_count: Total scene count (for progress logging).
+        scene_prompts: List of ScenePrompt with prompts already saved to DB.
         workflow_id: Workflow UUID for DB FK.
 
     Returns:
-        List of SceneImageResult for the newly generated scenes.
+        List of SceneImageResult with blob IDs.
     """
     scene_results: list[SceneImageResult] = []
+
+    session_maker = _db.async_session_maker
+    assert session_maker is not None
 
     async with httpx.AsyncClient(
         base_url=endpoint_url, timeout=_GENERATE_TIMEOUT_SEC
     ) as client:
-        for scene in scenes:
-            # --- a. Generate image prompt via LLM ---
-            prompt_result = await generate_scene_image_prompt(scene.combined_text)
-            log.info(
-                "scene %d: generated prompt (%d chars)",
-                scene.scene_index,
-                len(prompt_result.prompt),
-            )
-
-            # --- b. POST /generate → PNG bytes ---
+        for sp in scene_prompts:
+            # POST /generate → PNG bytes
             resp = await client.post(
                 _GENERATE_PATH,
                 json={
-                    "prompt": prompt_result.prompt,
-                    "negative_prompt": prompt_result.negative_prompt,
+                    "prompt": sp.prompt,
+                    "negative_prompt": sp.negative_prompt,
                     "width": settings.image_width,
                     "height": settings.image_height,
                 },
@@ -340,9 +425,7 @@ async def _generate_pending_scene_images(
             resp.raise_for_status()
             png_bytes = _validate_png_response(resp)
 
-            # --- c. Save PNG blob to Postgres ---
-            session_maker = _db.async_session_maker
-            assert session_maker is not None
+            # Save PNG blob and update scene
             async with session_maker() as session:
                 blob = await blob_service.store(
                     session=session,
@@ -352,32 +435,30 @@ async def _generate_pending_scene_images(
                     workflow_id=workflow_id,
                 )
 
-                # --- d. Update all chunks in scene with same image_blob_id ---
                 svc = WorkflowService(session)
-                for chunk_idx in scene.chunk_indices:
-                    await svc.complete_chunk_image(
-                        workflow_id=workflow_id,
-                        chunk_index=chunk_idx,
-                        blob_id=blob.id,
-                        image_prompt=prompt_result.prompt,
-                    )
+                await svc.complete_scene_image(
+                    workflow_id=workflow_id,
+                    scene_index=sp.scene_index,
+                    blob_id=blob.id,
+                )
                 await session.commit()
 
             scene_results.append(
                 SceneImageResult(
-                    scene_index=scene.scene_index,
-                    chunk_indices=scene.chunk_indices,
+                    scene_index=sp.scene_index,
+                    chunk_indices=sp.chunk_indices,
                     image_blob_id=str(blob.id),
-                    image_prompt=prompt_result.prompt,
+                    image_prompt=sp.prompt,
+                    image_negative_prompt=sp.negative_prompt,
                 )
             )
 
             log.info(
                 "scene %d/%d done blob_id=%s chunks=%s",
-                scene.scene_index + 1,
-                total_scene_count,
+                sp.scene_index + 1,
+                len(scene_prompts),
                 blob.id,
-                scene.chunk_indices,
+                sp.chunk_indices,
             )
 
     return scene_results
