@@ -51,5 +51,5 @@ warn_unused_configs = true
 disallow_untyped_defs = true
 
 [[tool.mypy.overrides]]
-module = ["prometheus_client.*", "prometheus_fastapi_instrumentator.*", "hatchet_sdk.*", "soundfile.*"]
+module = ["prometheus_client.*", "prometheus_fastapi_instrumentator.*", "hatchet_sdk.*", "soundfile.*", "httpx.*"]
 ignore_missing_imports = true
