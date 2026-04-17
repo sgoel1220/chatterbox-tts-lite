@@ -47,6 +47,7 @@ Consolidate into a single **creepy-brain** service that:
 - Abstracts GPU providers (RunPod now, swappable later)
 - Provides a web UI for monitoring and control
 - Ensures zero cost leaks through automatic cleanup
+- Keeps GPU pods **stateless** — TTS pod only runs Chatterbox (`POST /synthesize`), image pod only runs SDXL (`POST /generate`). All pre/post processing (chunking, normalization, validation, retry, stitching) runs in creepy-brain.
 
 ---
 
@@ -81,21 +82,27 @@ Consolidate into a single **creepy-brain** service that:
 │                   creepy-brain (CONSOLIDATED)                   │
 │  - Hatchet worker (workflow execution)                          │
 │  - Story generation (LLM calls - local, no HTTP)                │
+│  - Text chunking + LLM normalization (API call)                 │
+│  - Audio validation + retry logic (numpy)                       │
+│  - Audio stitching + MP3 encoding                               │
 │  - Metadata storage (Postgres + SQLAlchemy)                     │
 │  - GPU provider abstraction (RunPod/Local/Modal)                │
-│  - Audio blob storage                                           │
+│  - Blob storage                                                 │
 │  - Web UI dashboard                                             │
 ├─────────────────────────────────────────────────────────────────┤
 │                   Hatchet Engine (self-hosted)                  │
 │  - Workflow orchestration + dashboard UI                        │
 │  - Runs alongside creepy-brain (same Docker Compose)            │
-└────────────────────────────┬────────────────────────────────────┘
-                             │ HTTP (only for GPU work)
-                   ┌─────────▼─────────┐
-                   │    tts-server     │
-                   │  (RunPod GPU pod) │
-                   │  TTS + Image gen  │
-                   └───────────────────┘
+└──────────────────────┬─────────────────────────┬───────────────┘
+                       │ HTTP per-chunk sync      │ HTTP per-chunk sync
+              ┌────────▼────────┐       ┌─────────▼────────┐
+              │   tts-server    │       │  image-server    │
+              │ (RunPod GPU pod)│       │ (RunPod GPU pod) │
+              │                 │       │                  │
+              │ POST /synthesize│       │ POST /generate   │
+              │ Chatterbox only │       │ SDXL only        │
+              │ Stateless       │       │ Stateless        │
+              └─────────────────┘       └──────────────────┘
 ```
 
 ---
@@ -136,23 +143,33 @@ Consolidate into a single **creepy-brain** service that:
 │  │      Postgres       │  │   Hatchet Engine    │  │    creepy-brain     │  │
 │  │                     │  │                     │  │                     │  │
 │  │  - Workflow state   │◀─│  - DAG scheduling   │◀─│  - FastAPI app      │  │
-│  │  - Stories         │  │  - Retry logic      │  │  - Hatchet worker   │  │
-│  │  - Runs/Blobs      │  │  - Dashboard UI     │  │  - Story pipeline   │  │
-│  │  - GPU pod tracking│  │                     │  │  - GPU abstraction  │  │
-│  └─────────────────────┘  └─────────────────────┘  └──────────┬──────────┘  │
+│  │  - Stories          │  │  - Retry logic      │  │  - Hatchet worker   │  │
+│  │  - Runs/Blobs       │  │  - Dashboard UI     │  │  - Story pipeline   │  │
+│  │  - GPU pod tracking │  │                     │  │  - Text chunking    │  │
+│  └─────────────────────┘  └─────────────────────┘  │  - LLM normalization│  │
+│                                                     │  - Audio validation │  │
+│                                                     │  - Retry logic      │  │
+│                                                     │  - Stitching/encode │  │
+│                                                     │  - GPU abstraction  │  │
+│                                                     └──────────┬──────────┘  │
 │                                                               │             │
 └───────────────────────────────────────────────────────────────┼─────────────┘
                                                                 │
-                                                    HTTP (polling)
+                                              HTTP (per-chunk sync calls)
                                                                 │
-                                              ┌─────────────────▼─────────────┐
-                                              │         tts-server            │
-                                              │        (RunPod GPU)           │
-                                              │                               │
-                                              │  - Chatterbox TTS model       │
-                                              │  - SDXL image generation      │
-                                              │  - Async job API              │
-                                              └───────────────────────────────┘
+                              ┌─────────────────────────────────┴──────────────────┐
+                              │                                                     │
+              ┌───────────────▼───────────────┐       ┌────────────────────────────▼──┐
+              │        tts-server             │       │       image-server             │
+              │       (RunPod GPU)            │       │      (RunPod GPU)              │
+              │                               │       │                                │
+              │  POST /synthesize             │       │  POST /generate                │
+              │  { text, voice, seed }        │       │  { prompt, width, height }     │
+              │  → WAV bytes                  │       │  → PNG bytes                   │
+              │                               │       │                                │
+              │  Stateless. One endpoint.     │       │  Separate Docker image.        │
+              │  Chatterbox only.             │       │  SDXL only.                    │
+              └───────────────────────────────┘       └────────────────────────────────┘
 ```
 
 ### Data Flow
@@ -170,26 +187,34 @@ Consolidate into a single **creepy-brain** service that:
    - Output: story_id, full_text
                     │
                     ▼
-4. Step 2: tts_synthesis (GPU POD)
-   - Spin up RunPod (idempotent)
+4. Step 2: tts_synthesis (creepy-brain + TTS GPU POD)
+   - Spin up TTS GPU pod (idempotent by workflow_id)
    - Wait for pod ready
-   - POST /tts, poll until complete
-   - Save audio blobs
-   - Output: run_id, chunk audio
+   - Normalize full story text via LLM API (one call, cached in DB)
+   - chunk_text_by_sentences() → N chunks
+   - For each chunk (sequential):
+       POST /synthesize { text, voice, seed } → WAV bytes
+       validate_chunk_audio() locally (numpy: RMS, peak, voiced ratio)
+       if failed: retry with seed+1 (up to max_retries)
+       save WAV blob to Postgres
+   - Output: chunk blob IDs, durations
                     │
                     ▼
-5. Step 3: image_generation (SAME GPU POD)
-   - Model swap on same pod
-   - Generate images per chunk
-   - Save image blobs
-   - Output: image_blob_ids
+5. Step 3: image_generation (IMAGE GPU POD — separate Docker image)
+   - Spin up image GPU pod (separate from TTS pod)
+   - For each chunk: generate image prompt via LLM, POST /generate → PNG bytes
+   - Save image blobs to Postgres
+   - Terminate image pod
+   - Output: image blob IDs
                     │
                     ▼
 6. Step 4: stitch_final (LOCAL)
-   - Combine audio + images (ffmpeg)
-   - Save final artifact
-   - Terminate GPU pod
-   - Output: final_video_url
+   - Pull chunk WAV blobs from Postgres
+   - Concatenate + encode to MP3 (soundfile/ffmpeg)
+   - If images: create video (ffmpeg)
+   - Save final artifact blob
+   - Terminate TTS GPU pod
+   - Output: final_audio_blob_id, final_video_blob_id
                     │
                     ▼
 7. Workflow complete, artifacts available in UI
@@ -219,18 +244,21 @@ Consolidate into a single **creepy-brain** service that:
 
 SQLAlchemy is already used in metadata-server and is the standard Python ORM.
 
-### GPU Communication: Polling
+### GPU Communication: Per-chunk Synchronous HTTP Calls
 
-**Why not webhooks?**
+**Why not a single batch job with polling?**
 
-| Aspect | Polling | Webhooks |
-|--------|---------|----------|
-| Network complexity | Low | High (GPU needs to reach orchestrator) |
-| Debugging | Easy (hit endpoint manually) | Hard (need to trace callbacks) |
-| NAT/firewall | Works | Requires inbound connectivity |
-| Implementation | Simple loop | Callback handlers, state machine |
+| Aspect | Per-chunk sync calls | Single batch job + polling |
+|--------|---------------------|---------------------------|
+| Checkpoint/resume | Each chunk saved to DB before next starts | Lose all work if pod dies mid-job |
+| HTTP timeout risk | Each call is 30-60s, safe | 15-20 min job fights timeouts everywhere |
+| Progress visibility | Real-time per-chunk in UI | Coarse-grained |
+| Retry granularity | Re-synthesize one bad chunk | Re-run entire job |
+| Overhead | ~1ms HTTP vs 20-40s synthesis | Negligible difference |
 
-**Decision**: Polling - simplest approach that works reliably.
+**Decision**: N sequential `POST /synthesize` calls (one per chunk). The GPU is stateless — it
+receives `{text, voice, seed}` and returns WAV bytes with HTTP 200 always. Validation and retry
+logic live in creepy-brain, not in the GPU pod.
 
 ### Blob Storage: Postgres
 
@@ -813,7 +841,7 @@ Response: 200 OK
 **Stories**:
 1. Create ContentPipeline workflow definition
 2. Implement generate_story step
-3. Implement tts_synthesis step with polling
+3. Implement tts_synthesis step (per-chunk sync calls, validation + retry in creepy-brain)
 4. Implement image_generation step
 5. Implement stitch_final step
 6. Add on_failure cleanup hook
