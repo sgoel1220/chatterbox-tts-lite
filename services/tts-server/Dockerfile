@@ -31,10 +31,23 @@ ENV PATH="/root/.local/bin:$PATH"
 
 WORKDIR /app
 
-# Install chatterbox with all its dependencies (no --no-deps)
+# Install only required dependencies (skip gradio, spacy-pkuseg, pykakasi)
 RUN uv pip install --system --no-cache \
-    "git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09" \
-    fastapi uvicorn[standard] soundfile pydantic huggingface_hub hf_transfer
+    # Chatterbox core deps
+    transformers==4.46.3 \
+    diffusers==0.29.0 \
+    librosa==0.11.0 \
+    pyloudnorm \
+    omegaconf \
+    conformer==0.3.2 \
+    resemble-perth==1.0.1 \
+    safetensors==0.5.3 \
+    s3tokenizer \
+    torchaudio==2.5.1 \
+    # Server deps
+    fastapi uvicorn[standard] soundfile pydantic huggingface_hub hf_transfer \
+    && uv pip install --system --no-cache --no-deps \
+    "git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09"
 
 # Copy only the minimal server
 COPY services/tts-server/minimal_server.py /app/minimal_server.py
