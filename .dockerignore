@@ -61,6 +61,5 @@ htmlcov/
 # Memory and docs
 memory/
 
-# Service-specific ignores
-services/*/voices/
+# Service-specific ignores (voices now baked into image)
 services/*/reference_audio/
