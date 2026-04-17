@@ -31,11 +31,10 @@ ENV PATH="/root/.local/bin:$PATH"
 
 WORKDIR /app
 
-# Install Python dependencies with uv (torch already in base image)
-COPY services/tts-server/requirements-minimal.txt /tmp/requirements.txt
-RUN uv pip install --system --no-cache -r /tmp/requirements.txt && \
-    uv pip install --system --no-cache --no-deps git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09 s3tokenizer==0.3.0 onnx==1.16.0 && \
-    uv pip install --system --no-cache "protobuf>=4.25.0"
+# Install chatterbox with all its dependencies (no --no-deps)
+RUN uv pip install --system --no-cache \
+    "git+https://github.com/devnen/chatterbox-v2.git@cc0357396d9c73fc1e6c544ee40bb596020edd09" \
+    fastapi uvicorn[standard] soundfile pydantic huggingface_hub hf_transfer
 
 # Copy only the minimal server
 COPY services/tts-server/minimal_server.py /app/minimal_server.py
