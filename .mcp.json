@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "serena": {
-      "command": "/Users/shubham/.local/bin/uvx",
+      "command": "uvx",
       "args": [
         "-p",
         "3.13",
