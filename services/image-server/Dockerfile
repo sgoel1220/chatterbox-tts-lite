@@ -23,22 +23,22 @@ ENV PATH="/root/.local/bin:$PATH"
 
 WORKDIR /app
 
+# Pin versions — stable layer, cached across rebuilds unless deps change
 RUN uv pip install --system --no-cache \
-    diffusers \
-    transformers \
-    accelerate \
-    safetensors \
-    Pillow \
-    sentencepiece \
-    huggingface_hub \
-    hf_transfer \
-    fastapi \
-    "uvicorn[standard]" \
-    pydantic
-
-COPY services/image-server/server.py /app/server.py
+    diffusers==0.31.0 \
+    transformers==4.46.3 \
+    safetensors==0.5.3 \
+    Pillow==11.1.0 \
+    huggingface_hub==0.28.1 \
+    hf_transfer==0.1.4 \
+    fastapi==0.115.6 \
+    "uvicorn[standard]==0.32.1" \
+    pydantic==2.10.4
 
 RUN mkdir -p /app/hf_cache
+
+# Copy app last — changes here don't invalidate the dep layer above
+COPY services/image-server/server.py /app/server.py
 
 EXPOSE 8006
 
