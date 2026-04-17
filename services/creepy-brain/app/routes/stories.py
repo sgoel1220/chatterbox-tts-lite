@@ -11,7 +11,6 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import settings
 from app.db import get_session
 from app.models.enums import StoryStatus
 from app.models.story import Story
@@ -20,16 +19,6 @@ from app.services.story_service import StoryService
 log = structlog.get_logger()
 
 router = APIRouter(prefix="/api/stories", tags=["stories"])
-
-# Semaphore to cap concurrent generation runs
-_semaphore: Optional[asyncio.Semaphore] = None
-
-
-def _get_semaphore() -> asyncio.Semaphore:
-    global _semaphore
-    if _semaphore is None:
-        _semaphore = asyncio.Semaphore(settings.max_concurrent_generations)
-    return _semaphore
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +102,8 @@ async def generate_story(
     story = await svc.create(body.premise)
     await session.commit()  # route owns the transaction boundary
 
+    semaphore: asyncio.Semaphore = request.app.state.generation_semaphore
+
     async def _run() -> None:
         from app.db import async_session_maker
 
@@ -120,7 +111,7 @@ async def generate_story(
             return
         try:
             async with async_session_maker() as bg_session:
-                async with _get_semaphore():
+                async with semaphore:
                     await orchestrator.run_pipeline(story.id, body.premise, bg_session)
         except Exception:
             log.exception("pipeline_failed", story_id=str(story.id))

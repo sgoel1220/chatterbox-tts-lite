@@ -29,7 +29,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("database_initialized", database_url=settings.database_url.split('@')[1])
 
     # Interim task registry — replaced by Hatchet in bead Chatterbox-TTS-Server-104
-    app.state.background_tasks: set[asyncio.Task[None]] = set()  # type: ignore[assignment]
+    app.state.background_tasks: set[asyncio.Task[None]] = set()  # type: ignore[misc]
+
+    # Semaphore to cap concurrent story generation runs
+    app.state.generation_semaphore = asyncio.Semaphore(settings.max_concurrent_generations)
 
     # Hatchet worker runs as a separate process (see app/workflows/worker.py)
 
