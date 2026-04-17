@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
 import shutil
 import uuid
 from pathlib import Path
 from typing import Tuple
 
+import numpy as np
+import soundfile as sf
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi.responses import Response
 
 import engine
 from config import config_manager, get_output_path, get_reference_audio_path
@@ -23,6 +27,7 @@ from models import (
     LiteCloneRunResponse,
     LiteCloneTTSRequest,
     ReferenceAudioFilesResponse,
+    SynthesizeRequest,
     UploadReferenceAudioResponse,
 )
 from run_orchestrator import build_chunk_preview, execute_lite_clone_run, run_lite_clone_job
@@ -135,3 +140,33 @@ async def create_job(request: LiteCloneTTSRequest) -> LiteCloneJobCreatedRespons
 @router.get("/api/jobs/{job_id}", response_model=LiteCloneJobStatusResponse)
 async def get_job(job_id: str) -> LiteCloneJobStatusResponse:
     return job_store.get(job_id)
+
+
+@router.post("/synthesize")
+async def synthesize_endpoint(request: SynthesizeRequest) -> Response:
+    """Stateless single-shot TTS synthesis. Returns raw WAV bytes."""
+    ref_base = get_reference_audio_path(ensure_absolute=True).resolve()
+    ref_path = (ref_base / request.voice).resolve()
+    if not str(ref_path).startswith(str(ref_base) + "/"):
+        raise HTTPException(status_code=400, detail="Invalid voice filename.")
+    if not ref_path.is_file():
+        raise HTTPException(status_code=404, detail=f"Voice '{request.voice}' not found.")
+
+    loop = asyncio.get_running_loop()
+    wav_tensor, sample_rate = await loop.run_in_executor(
+        None,
+        lambda: engine.synthesize(
+            text=request.text,
+            audio_prompt_path=str(ref_path),
+            seed=request.seed,
+        ),
+    )
+
+    if wav_tensor is None or sample_rate is None:
+        raise HTTPException(status_code=500, detail="Synthesis failed.")
+
+    audio_np: np.ndarray = wav_tensor.squeeze().numpy()
+    audio_int16 = (np.clip(audio_np, -1.0, 1.0) * 32767).astype(np.int16)
+    buf = io.BytesIO()
+    sf.write(buf, audio_int16, sample_rate, format="wav", subtype="PCM_16")
+    return Response(content=buf.getvalue(), media_type="audio/wav")
