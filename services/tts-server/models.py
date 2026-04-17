@@ -184,6 +184,12 @@ class UploadReferenceAudioResponse(BaseModel):
     all_reference_files: List[str]
 
 
+class SynthesizeRequest(BaseModel):
+    text: str = Field(..., min_length=1, max_length=2000, description="Text to synthesize.")
+    voice: str = Field(..., description="Reference audio filename for voice cloning.")
+    seed: int = Field(0, ge=0, description="Random seed for reproducibility. 0 means random.")
+
+
 class ModelInfo(BaseModel):
     state: str  # "not_loaded" | "loading" | "ready" | "error"
     loaded: bool
