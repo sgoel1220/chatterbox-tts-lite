@@ -1,4 +1,13 @@
-"""Abstract base classes and data structures for GPU providers."""
+"""Abstract base classes and data structures for GPU providers.
+
+Status lifecycle
+----------------
+CREATING  – pod accepted by provider, not yet booted
+RUNNING   – pod is running per the provider API (desiredStatus == RUNNING)
+READY     – RUNNING + health probe passed; only assigned by wait_for_ready()
+TERMINATED – pod has exited or been terminated
+ERROR     – provider reported an error state
+"""
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -31,7 +40,8 @@ class GpuPod:
     endpoint_url: str | None
     gpu_type: str | None
     cost_per_hour_cents: int | None
-    created_at: datetime
+    # None when the provider API does not expose creation time (e.g. via list_active_pods)
+    created_at: datetime | None
 
 
 class GpuProvider(ABC):

@@ -26,6 +26,7 @@ query GetPod($id: String!) {
         id
         name
         desiredStatus
+        createdAt
         runtime {
             ports { ip privatePort publicPort isIpPublic type }
         }
@@ -47,6 +48,7 @@ query ListPods {
             id
             name
             desiredStatus
+            createdAt
             runtime {
                 ports { ip privatePort publicPort isIpPublic type }
             }
@@ -85,10 +87,27 @@ class RunPodProvider(GpuProvider):
             raise RuntimeError(f"Unexpected RunPod response shape: {body}")
         return data
 
-    def _parse_pod(self, raw: dict[str, object]) -> GpuPod:
+    def _parse_pod(
+        self,
+        raw: dict[str, object],
+        service_port: int | None = None,
+    ) -> GpuPod:
+        """Parse a raw RunPod API dict into a GpuPod.
+
+        Args:
+            raw: GraphQL pod object.
+            service_port: The private container port that should be used as the
+                service endpoint.  When provided, only the public mapping for
+                that specific private port is considered, avoiding accidental
+                selection of an SSH or metrics port.  When None, the first
+                publicly-exposed port is used (e.g. when the spec is not
+                available in list/get contexts).
+        """
         pod_id = str(raw["id"])
         desired = str(raw.get("desiredStatus", ""))
 
+        # RUNNING/READY distinction: RUNNING = provider says pod is up;
+        # READY = RUNNING + health probe passed (set only by wait_for_ready).
         if desired == "RUNNING":
             status = PodStatus.RUNNING
         elif desired in ("EXITED", "TERMINATED"):
@@ -100,21 +119,40 @@ class RunPodProvider(GpuProvider):
         runtime = raw.get("runtime")
         if isinstance(runtime, dict):
             for port in runtime.get("ports") or []:
-                if (
-                    isinstance(port, dict)
-                    and port.get("privatePort") == 8005
-                    and port.get("isIpPublic")
-                ):
-                    ip = port.get("ip", "")
-                    public_port = port.get("publicPort", 8005)
+                if not isinstance(port, dict):
+                    continue
+                if not port.get("isIpPublic"):
+                    continue
+                # When a specific service port is known, only match its mapping.
+                if service_port is not None and port.get("privatePort") != service_port:
+                    continue
+                ip = port.get("ip", "")
+                public_port = port.get("publicPort")
+                if ip and public_port is not None:
                     endpoint_url = f"http://{ip}:{public_port}"
                     break
 
-        machine = raw.get("machine") if isinstance(raw.get("machine"), dict) else {}
-        assert isinstance(machine, dict)
+        machine_raw = raw.get("machine")
+        if machine_raw is not None and not isinstance(machine_raw, dict):
+            raise TypeError(
+                f"Expected 'machine' to be a dict, got {type(machine_raw).__name__}: {machine_raw!r}"
+            )
+        machine: dict[str, object] = machine_raw if isinstance(machine_raw, dict) else {}
         gpu_type: str | None = str(machine["gpuDisplayName"]) if "gpuDisplayName" in machine else None
         cost_raw = machine.get("costPerGpu")
-        cost_cents: int | None = int(float(cost_raw) * 100) if cost_raw is not None else None
+        cost_cents: int | None = int(float(cost_raw) * 100) if cost_raw is not None else None  # type: ignore[arg-type]
+
+        # Parse createdAt from the API when available; fall back to None rather than
+        # silently using "now" which would be wrong for fetched/listed pods.
+        created_at: datetime | None = None
+        raw_created_at = raw.get("createdAt")
+        if isinstance(raw_created_at, str):
+            try:
+                created_at = datetime.fromisoformat(raw_created_at)
+                if created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=timezone.utc)
+            except ValueError:
+                created_at = None
 
         return GpuPod(
             id=pod_id,
@@ -123,21 +161,28 @@ class RunPodProvider(GpuProvider):
             endpoint_url=endpoint_url,
             gpu_type=gpu_type,
             cost_per_hour_cents=cost_cents,
-            created_at=datetime.now(timezone.utc),
+            created_at=created_at,
         )
 
-    async def _find_pod_by_name(self, name: str) -> GpuPod | None:
+    async def _find_pod_by_name(
+        self,
+        name: str,
+        service_port: int | None = None,
+    ) -> GpuPod | None:
         data = await self._gql(_LIST_PODS_QUERY)
         myself = data.get("myself")
         if not isinstance(myself, dict):
             return None
         for raw in myself.get("pods") or []:
             if isinstance(raw, dict) and raw.get("name") == name:
-                return self._parse_pod(raw)
+                return self._parse_pod(raw, service_port=service_port)
         return None
 
     async def create_pod(self, spec: GpuPodSpec, idempotency_key: str) -> GpuPod:
-        existing = await self._find_pod_by_name(idempotency_key)
+        # Use the first spec port as the canonical service port so endpoint
+        # selection is deterministic even when multiple ports are exposed.
+        service_port: int | None = spec.ports[0] if spec.ports else None
+        existing = await self._find_pod_by_name(idempotency_key, service_port=service_port)
         if existing and existing.status != PodStatus.TERMINATED:
             return existing
 
@@ -159,11 +204,11 @@ class RunPodProvider(GpuProvider):
             raw = data.get("podRentInterruptable")
             if not isinstance(raw, dict):
                 raise RuntimeError(f"Unexpected create_pod response: {data}")
-            return self._parse_pod(raw)
+            return self._parse_pod(raw, service_port=service_port)
         except Exception:
             # On any error (including concurrent creation), re-check by name before
             # re-raising — a concurrent caller may have already created the pod.
-            recovered = await self._find_pod_by_name(idempotency_key)
+            recovered = await self._find_pod_by_name(idempotency_key, service_port=service_port)
             if recovered and recovered.status != PodStatus.TERMINATED:
                 return recovered
             raise
