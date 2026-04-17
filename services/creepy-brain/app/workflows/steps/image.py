@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any
 
 import httpx
 from hatchet_sdk import Context
@@ -42,7 +41,7 @@ from app.services.workflow_service import (
     get_chunks_for_image_step,
     get_optional_workflow_id,
 )
-from app.text.scene_grouping import group_chunks_into_scenes
+from app.text.scene_grouping import Scene, group_chunks_into_scenes
 
 log = logging.getLogger(__name__)
 
@@ -74,7 +73,7 @@ def _validate_png_response(resp: httpx.Response) -> bytes:
         )
 
     # Check we have content
-    png_bytes = resp.content
+    png_bytes: bytes = resp.content
     if not png_bytes:
         raise ValueError("Empty response body from image server")
 
@@ -106,6 +105,39 @@ class ImageStepOutput(BaseModel):
     scenes: list[SceneImageResult] = Field(description="Image results per scene")
     pod_id: str = Field(description="GPU pod ID used for generation")
     scene_count: int = Field(ge=0, description="Number of scenes processed")
+
+
+def _scene_resume_result(
+    scene: Scene,
+    chunk_image_blob_map: dict[int, str | None],
+    chunk_image_prompt_map: dict[int, str | None],
+) -> SceneImageResult | None:
+    """Return a SceneImageResult from existing DB data if the scene is fully done.
+
+    A scene is considered fully done only when every chunk in the scene has a
+    non-None ``image_blob_id`` AND all those blob IDs are identical (guaranteeing
+    they were written by a single consistent generation pass for this grouping).
+
+    Returns None if the scene needs (re)generation.
+    """
+    blob_ids: list[str] = []
+    for idx in scene.chunk_indices:
+        blob_id = chunk_image_blob_map.get(idx)
+        if blob_id is None:
+            return None
+        blob_ids.append(blob_id)
+
+    # All chunks must share the same blob to confirm consistent prior generation
+    if len(set(blob_ids)) != 1:
+        return None
+
+    prompt = chunk_image_prompt_map.get(scene.chunk_indices[0]) or ""
+    return SceneImageResult(
+        scene_index=scene.scene_index,
+        chunk_indices=scene.chunk_indices,
+        image_blob_id=blob_ids[0],
+        image_prompt=prompt,
+    )
 
 
 def _image_pod_spec() -> GpuPodSpec:
@@ -165,6 +197,16 @@ async def execute(
     chunk_texts: list[str] = [str(c["text"]) for c in chunk_data]
     log.info("image_generation: %d chunks to group into scenes", len(chunk_texts))
 
+    # Build lookup for already-processed chunks (resume support)
+    chunk_image_blob_map: dict[int, str | None] = {
+        int(str(c["index"])): str(c["image_blob_id"]) if c.get("image_blob_id") else None
+        for c in chunk_data
+    }
+    chunk_image_prompt_map: dict[int, str | None] = {
+        int(str(c["index"])): str(c["image_prompt"]) if c.get("image_prompt") else None
+        for c in chunk_data
+    }
+
     # --- 3. Group chunks into scenes ---
     scenes = group_chunks_into_scenes(
         chunks=chunk_texts, chunks_per_scene=settings.chunks_per_scene
@@ -175,7 +217,35 @@ async def execute(
         settings.chunks_per_scene,
     )
 
-    # --- 4. Spin up image GPU pod ---
+    # --- 4. Check if all scenes already have consistent images (full resume) ---
+    resumed_results: list[SceneImageResult] = []
+    pending_scenes: list[Scene] = []
+    for scene in scenes:
+        prior = _scene_resume_result(scene, chunk_image_blob_map, chunk_image_prompt_map)
+        if prior is not None:
+            resumed_results.append(prior)
+        else:
+            pending_scenes.append(scene)
+
+    if not pending_scenes:
+        log.info(
+            "image_generation fully resumed from DB: %d scenes, no pod needed",
+            len(resumed_results),
+        )
+        return ImageStepOutput(
+            scenes=resumed_results,
+            pod_id="resumed",
+            scene_count=len(resumed_results),
+        ).model_dump()
+
+    log.info(
+        "image_generation: %d/%d scenes need generation, %d already done",
+        len(pending_scenes),
+        len(scenes),
+        len(resumed_results),
+    )
+
+    # --- 5. Spin up image GPU pod for pending scenes ---
     provider = get_provider(settings.runpod_api_key)
     pod = await provider.create_pod(
         spec=_image_pod_spec(),
@@ -183,7 +253,7 @@ async def execute(
     )
     log.info("image pod created pod_id=%s provider=%s", pod.id, pod.provider)
 
-    # --- 5. Wait for pod ready, then generate all scene images ---
+    # --- 6. Wait for pod ready, then generate pending scene images ---
     try:
         pod = await provider.wait_for_ready(
             pod.id,
@@ -193,9 +263,10 @@ async def execute(
         assert pod.endpoint_url is not None, f"pod {pod.id} ready but has no endpoint_url"
         log.info("image pod ready endpoint=%s", pod.endpoint_url)
 
-        scene_results = await _generate_all_scene_images(
+        new_results = await _generate_pending_scene_images(
             endpoint_url=pod.endpoint_url,
-            scenes=scenes,
+            scenes=pending_scenes,
+            total_scene_count=len(scenes),
             workflow_id=workflow_id_uuid,
         )
     finally:
@@ -206,6 +277,9 @@ async def execute(
         except Exception as term_exc:
             log.error("failed to terminate image pod %s: %s", pod.id, term_exc)
 
+    scene_results = sorted(
+        resumed_results + new_results, key=lambda r: r.scene_index
+    )
     output = ImageStepOutput(
         scenes=scene_results,
         pod_id=pod.id,
@@ -222,20 +296,22 @@ async def execute(
     return output.model_dump()
 
 
-async def _generate_all_scene_images(
+async def _generate_pending_scene_images(
     endpoint_url: str,
-    scenes: list[Any],  # list[Scene] from scene_grouping
+    scenes: list[Scene],
+    total_scene_count: int,
     workflow_id: uuid.UUID,
 ) -> list[SceneImageResult]:
-    """Generate images for all scenes and persist to Postgres.
+    """Generate images for scenes that have not yet been completed.
 
     Args:
         endpoint_url: Base URL of the ready image GPU pod.
-        scenes: List of Scene objects from group_chunks_into_scenes.
+        scenes: Scenes that still need image generation.
+        total_scene_count: Total scene count (for progress logging).
         workflow_id: Workflow UUID for DB FK.
 
     Returns:
-        List of SceneImageResult with blob IDs and prompts.
+        List of SceneImageResult for the newly generated scenes.
     """
     scene_results: list[SceneImageResult] = []
 
@@ -243,7 +319,7 @@ async def _generate_all_scene_images(
         base_url=endpoint_url, timeout=_GENERATE_TIMEOUT_SEC
     ) as client:
         for scene in scenes:
-            # --- 6a. Generate image prompt via LLM ---
+            # --- a. Generate image prompt via LLM ---
             prompt_result = await generate_scene_image_prompt(scene.combined_text)
             log.info(
                 "scene %d: generated prompt (%d chars)",
@@ -251,7 +327,7 @@ async def _generate_all_scene_images(
                 len(prompt_result.prompt),
             )
 
-            # --- 6b. POST /generate → PNG bytes ---
+            # --- b. POST /generate → PNG bytes ---
             resp = await client.post(
                 _GENERATE_PATH,
                 json={
@@ -264,7 +340,7 @@ async def _generate_all_scene_images(
             resp.raise_for_status()
             png_bytes = _validate_png_response(resp)
 
-            # --- 6c. Save PNG blob to Postgres ---
+            # --- c. Save PNG blob to Postgres ---
             session_maker = _db.async_session_maker
             assert session_maker is not None
             async with session_maker() as session:
@@ -276,7 +352,7 @@ async def _generate_all_scene_images(
                     workflow_id=workflow_id,
                 )
 
-                # --- 6d. Update all chunks in scene with same image_blob_id ---
+                # --- d. Update all chunks in scene with same image_blob_id ---
                 svc = WorkflowService(session)
                 for chunk_idx in scene.chunk_indices:
                     await svc.complete_chunk_image(
@@ -299,7 +375,7 @@ async def _generate_all_scene_images(
             log.info(
                 "scene %d/%d done blob_id=%s chunks=%s",
                 scene.scene_index + 1,
-                len(scenes),
+                total_scene_count,
                 blob.id,
                 scene.chunk_indices,
             )
