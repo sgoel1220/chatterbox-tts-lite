@@ -5,7 +5,7 @@ End-to-end content pipeline: Story → TTS → Images → Stitch.
 Step order and timeouts:
     generate_story     (local, 15 min, 2 retries)
     tts_synthesis      (GPU pod, 30 min)
-    image_generation   (GPU pod, 10 min)
+    image_generation   (GPU pod, 45 min — covers pod readiness + N scenes × 180s/scene + LLM)
     stitch_final       (local, 5 min)
     cleanup_gpu_pod    (on_failure hook, 2 min)
 """
@@ -44,7 +44,8 @@ async def tts_synthesis(input: WorkflowInputSchema, ctx: Context) -> dict[str, o
 
 
 @content_pipeline.task(  # type: ignore[untyped-decorator]  # hatchet_sdk has no type stubs
-    execution_timeout=timedelta(minutes=10),
+    execution_timeout=timedelta(minutes=45),
+    retries=2,
     parents=[tts_synthesis],
 )
 async def image_generation(input: WorkflowInputSchema, ctx: Context) -> dict[str, object]:

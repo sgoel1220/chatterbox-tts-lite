@@ -173,6 +173,8 @@ async def get_chunks_for_image_step(
             "index": c.chunk_index,
             "text": c.chunk_text,
             "blob_id": str(c.tts_audio_blob_id) if c.tts_audio_blob_id else None,
+            "image_blob_id": str(c.image_blob_id) if c.image_blob_id else None,
+            "image_prompt": c.image_prompt,
         }
         for c in chunks
     ]
