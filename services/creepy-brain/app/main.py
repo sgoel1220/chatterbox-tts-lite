@@ -75,6 +75,9 @@ def create_app() -> FastAPI:
     from app.routes.stories import router as stories_router
     app.include_router(stories_router)
 
+    from app.routes.costs import router as costs_router
+    app.include_router(costs_router)
+
     # Mount static files for serving audio and UI
     static_dir = Path(__file__).parent.parent / "static"
     if static_dir.exists():
