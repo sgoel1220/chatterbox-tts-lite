@@ -63,6 +63,7 @@ class GpuPodStatus(str, Enum):
     CREATING = "creating"
     RUNNING = "running"
     READY = "ready"
+    STOPPED = "stopped"
     TERMINATED = "terminated"
     ERROR = "error"
 

@@ -254,6 +254,7 @@ async def execute(input: WorkflowInputSchema, ctx: StepContext) -> TtsStepOutput
             pod.id,
             timeout_sec=settings.pod_ready_timeout_sec,
             label="tts",
+            service_port=settings.gpu_port,
         )
 
         all_chunks_result = await _synthesize_all_chunks(

@@ -29,6 +29,7 @@ class GpuPodSpec(BaseModel):
     ports: list[int]
     cloud_type: str = "COMMUNITY"  # COMMUNITY or SECURE
     env: dict[str, str] = Field(default_factory=dict)
+    gpu_count: int = 1
 
     @classmethod
     def from_config(cls) -> "GpuPodSpec":
@@ -77,6 +78,18 @@ class GpuProvider(ABC):
 
         Args:
             pod_id: The pod ID to get.
+            service_port: The service port for endpoint URL construction.
+        """
+
+    @abstractmethod
+    async def resume_pod(
+        self, pod_id: str, gpu_count: int = 1, service_port: int | None = None
+    ) -> GpuPod:
+        """Resume a stopped pod.
+
+        Args:
+            pod_id: The pod ID to resume.
+            gpu_count: Number of GPUs to allocate.
             service_port: The service port for endpoint URL construction.
         """
 

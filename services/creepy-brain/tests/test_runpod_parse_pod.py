@@ -32,7 +32,7 @@ class TestParsePodStatus:
 
     def test_exited(self) -> None:
         pod = _provider()._parse_pod(_base_raw(desired="EXITED"))
-        assert pod.status == GpuPodStatus.TERMINATED
+        assert pod.status == GpuPodStatus.STOPPED
 
     def test_terminated(self) -> None:
         pod = _provider()._parse_pod(_base_raw(desired="TERMINATED"))
@@ -41,6 +41,12 @@ class TestParsePodStatus:
     def test_unknown_maps_to_creating(self) -> None:
         pod = _provider()._parse_pod(_base_raw(desired="PENDING"))
         assert pod.status == GpuPodStatus.CREATING
+
+    def test_exited_is_stopped_not_terminated(self) -> None:
+        """EXITED means stopped (volume preserved), not terminated."""
+        pod = _provider()._parse_pod(_base_raw(desired="EXITED"))
+        assert pod.status == GpuPodStatus.STOPPED
+        assert pod.status != GpuPodStatus.TERMINATED
 
 
 class TestParsePodEndpoint:
