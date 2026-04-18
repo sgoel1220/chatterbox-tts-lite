@@ -10,9 +10,10 @@ from app.engine import StepContext
 
 import app.db as _db  # module ref — always reads the live async_session_maker value
 from app.models.enums import StoryStatus
-from app.models.schemas import GenerateStoryStepOutput, WorkflowInputSchema
+from app.models.json_schemas import GenerateStoryStepOutput, WorkflowInputSchema
 from app.pipeline import orchestrator
 from app.services.story_service import StoryService
+from app.workflows.db_helpers import get_session_maker
 
 log = logging.getLogger(__name__)
 
@@ -48,8 +49,7 @@ async def execute(input: WorkflowInputSchema, ctx: StepContext) -> dict[str, obj
     await _ensure_db()
 
     # _ensure_db() guarantees async_session_maker is initialised.
-    session_maker = _db.async_session_maker
-    assert session_maker is not None
+    session_maker = get_session_maker()
 
     premise: str = input.premise
 

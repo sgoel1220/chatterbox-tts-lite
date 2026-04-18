@@ -32,24 +32,23 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.engine import StepContext
 
-import app.db as _db
 from app.config import settings
 from app.gpu import GpuPodSpec, get_provider
 from app.gpu.lifecycle import terminate_and_finalize
 from app.llm.image_prompts import generate_scene_image_prompt
 from app.models.enums import BlobType, ChunkStatus, GpuProvider as GpuProviderEnum
-from app.models.schemas import WorkflowInputSchema
+from app.models.json_schemas import WorkflowInputSchema
 from app.models.workflow import WorkflowScene
 from app.services import blob_service
 from app.services.cost_service import CostService
 from app.services.workflow_service import (
-    ChunkForImageStep,
     WorkflowService,
     get_chunks_for_image_step,
     get_optional_workflow_id,
     get_scenes_for_workflow,
 )
 from app.text.scene_grouping import Scene, group_chunks_into_scenes
+from app.workflows.db_helpers import get_session_maker
 
 log = logging.getLogger(__name__)
 
@@ -75,9 +74,7 @@ def _validate_png_response(resp: httpx.Response) -> bytes:
     # Check content type
     content_type = resp.headers.get("content-type", "")
     if "image/png" not in content_type:
-        raise ValueError(
-            f"Expected image/png content type, got: {content_type}"
-        )
+        raise ValueError(f"Expected image/png content type, got: {content_type}")
 
     # Check we have content
     png_bytes: bytes = resp.content
@@ -149,9 +146,7 @@ def _scene_from_db(db_scene: WorkflowScene, chunk_indices: list[int]) -> SceneIm
     )
 
 
-async def execute(
-    input: WorkflowInputSchema, ctx: StepContext
-) -> dict[str, object]:
+async def execute(input: WorkflowInputSchema, ctx: StepContext) -> dict[str, object]:
     """Generate images for each scene using an image GPU pod.
 
     Pipeline:
@@ -186,10 +181,7 @@ async def execute(
     log.info("image_generation started workflow_id=%s", workflow_run_id)
 
     # --- 2. Get chunk texts from DB ---
-    session_maker = _db.async_session_maker
-    assert session_maker is not None, (
-        "DB not initialized — call init_db() before starting"
-    )
+    session_maker = get_session_maker()
     async with session_maker() as session:
         chunk_data = await get_chunks_for_image_step(session, workflow_id_uuid)
         existing_scenes = await get_scenes_for_workflow(session, workflow_id_uuid)
@@ -214,9 +206,7 @@ async def execute(
     )
 
     # Build lookup for existing scenes (resume support)
-    existing_scene_map: dict[int, WorkflowScene] = {
-        s.scene_index: s for s in existing_scenes
-    }
+    existing_scene_map: dict[int, WorkflowScene] = {s.scene_index: s for s in existing_scenes}
 
     # --- 4. Check for completed scenes (resume) and pending scenes ---
     resumed_results: list[SceneImageResult] = []
@@ -224,7 +214,11 @@ async def execute(
 
     for scene in scenes:
         db_scene = existing_scene_map.get(scene.scene_index)
-        if db_scene is not None and db_scene.image_status == ChunkStatus.COMPLETED and db_scene.image_blob_id:
+        if (
+            db_scene is not None
+            and db_scene.image_status == ChunkStatus.COMPLETED
+            and db_scene.image_blob_id
+        ):
             # Scene already completed
             resumed_results.append(_scene_from_db(db_scene, scene.chunk_indices))
         else:
@@ -265,8 +259,7 @@ async def execute(
     log.info("image pod created pod_id=%s provider=%s", pod.id, pod.provider)
 
     # Persist pod to DB for cost tracking
-    session_maker = _db.async_session_maker
-    assert session_maker is not None
+    session_maker = get_session_maker()
     async with session_maker() as session:
         cost_svc = CostService(session)
         await cost_svc.record_pod(
@@ -284,7 +277,8 @@ async def execute(
             timeout_sec=settings.pod_ready_timeout_sec,
             service_port=settings.image_server_port,
         )
-        assert pod.endpoint_url is not None, f"pod {pod.id} ready but has no endpoint_url"
+        if pod.endpoint_url is None:
+            raise RuntimeError(f"pod {pod.id} ready but has no endpoint_url")
         log.info("image pod ready endpoint=%s", pod.endpoint_url)
 
         # Mark pod ready for cost tracking (start billing clock)
@@ -303,9 +297,7 @@ async def execute(
         except Exception as term_exc:
             log.error("failed to terminate image pod %s: %s", pod.id, term_exc)
 
-    scene_results = sorted(
-        resumed_results + new_results, key=lambda r: r.scene_index
-    )
+    scene_results = sorted(resumed_results + new_results, key=lambda r: r.scene_index)
     output = ImageStepOutput(
         scenes=scene_results,
         pod_id=pod.id,
@@ -342,8 +334,7 @@ async def _generate_and_save_prompts(
     """
     scene_prompts: list[ScenePrompt] = []
 
-    session_maker = _db.async_session_maker
-    assert session_maker is not None
+    session_maker = get_session_maker()
 
     for scene in scenes:
         # Check if scene already has a prompt (partial resume)
@@ -424,12 +415,9 @@ async def _generate_images_from_prompts(
     """
     scene_results: list[SceneImageResult] = []
 
-    session_maker = _db.async_session_maker
-    assert session_maker is not None
+    session_maker = get_session_maker()
 
-    async with httpx.AsyncClient(
-        base_url=endpoint_url, timeout=_GENERATE_TIMEOUT_SEC
-    ) as client:
+    async with httpx.AsyncClient(base_url=endpoint_url, timeout=_GENERATE_TIMEOUT_SEC) as client:
         for sp in scene_prompts:
             # POST /generate → PNG bytes
             resp = await client.post(

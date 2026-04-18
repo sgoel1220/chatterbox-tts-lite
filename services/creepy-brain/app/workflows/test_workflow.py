@@ -21,7 +21,8 @@ async def _step_two(input: EmptyModel, ctx: StepContext) -> dict[str, object]:
     """Second step — reads step_one output and doubles the value."""
     result = ctx.parent_outputs.get("step_one", {})
     raw_value = result.get("value")
-    assert isinstance(raw_value, int)
+    if not isinstance(raw_value, int):
+        raise ValueError("step_one output value must be an int")
     value: int = raw_value
     return {"message": f"Step two complete, doubled: {value * 2}"}
 

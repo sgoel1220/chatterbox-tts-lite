@@ -16,7 +16,13 @@ from app.models.enums import (
     WorkflowStatus,
     WorkflowType,
 )
-from app.models.schemas import WorkflowInputSchema, WorkflowResultSchema
+from app.models.json_schemas import WorkflowInputSchema, WorkflowResultSchema
+from app.validation_limits import (
+    MAX_REVISIONS_MAX,
+    MAX_REVISIONS_MIN,
+    WORKFLOW_TARGET_WORD_COUNT_MAX,
+    WORKFLOW_TARGET_WORD_COUNT_MIN,
+)
 
 
 class CreateWorkflowRequest(BaseModel):
@@ -26,8 +32,12 @@ class CreateWorkflowRequest(BaseModel):
     voice_name: str = Field(..., description="Voice to use for TTS")
     generate_images: bool = Field(default=False)
     stitch_video: bool = Field(default=False)
-    max_revisions: int = Field(default=3)
-    target_word_count: int = Field(default=5000)
+    max_revisions: int = Field(default=3, ge=MAX_REVISIONS_MIN, le=MAX_REVISIONS_MAX)
+    target_word_count: int = Field(
+        default=5000,
+        ge=WORKFLOW_TARGET_WORD_COUNT_MIN,
+        le=WORKFLOW_TARGET_WORD_COUNT_MAX,
+    )
 
 
 class WorkflowResponse(BaseModel):

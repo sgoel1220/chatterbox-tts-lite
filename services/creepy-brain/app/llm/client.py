@@ -5,12 +5,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from typing import Any, Protocol, Type, TypeVar
+from collections.abc import Iterable
+from typing import Any, Protocol, TYPE_CHECKING, Type, TypeVar, cast
 
 import httpx
 from pydantic import BaseModel
 
 from app.config import settings
+
+if TYPE_CHECKING:
+    from anthropic.types import MessageParam
 
 log = logging.getLogger(__name__)
 
@@ -24,6 +28,7 @@ class LLMProvider(Protocol):
     """Minimal interface for an LLM backend."""
 
     async def complete(self, system: str, messages: list[dict[str, Any]]) -> str: ...
+    async def aclose(self) -> None: ...
 
 
 class AnthropicProvider:
@@ -31,6 +36,7 @@ class AnthropicProvider:
 
     def __init__(self, api_key: str, model: str) -> None:
         import anthropic  # Lazy import - only needed when using Anthropic provider
+
         self._client = anthropic.AsyncAnthropic(api_key=api_key)
         self._model = model
 
@@ -39,7 +45,7 @@ class AnthropicProvider:
             model=self._model,
             max_tokens=8192,
             system=system,
-            messages=messages,  # type: ignore[arg-type]
+            messages=cast(Iterable["MessageParam"], messages),
         )
         log.info(
             "llm call provider=anthropic input_tokens=%d output_tokens=%d",
@@ -49,8 +55,12 @@ class AnthropicProvider:
         parts: list[str] = []
         for block in response.content:
             if hasattr(block, "text"):
-                parts.append(block.text)  # type: ignore[union-attr]
+                parts.append(block.text)
         return "".join(parts)
+
+    async def aclose(self) -> None:
+        """Close the underlying Anthropic client."""
+        await self._client.close()
 
 
 class OpenRouterProvider:
@@ -86,6 +96,10 @@ class OpenRouterProvider:
         )
         return content
 
+    async def aclose(self) -> None:
+        """Close the underlying HTTP client."""
+        await self._http.aclose()
+
 
 _provider: LLMProvider | None = None
 
@@ -104,6 +118,15 @@ def _get_provider() -> LLMProvider:
                 model=settings.llm_model,
             )
     return _provider
+
+
+async def close_llm_provider() -> None:
+    """Close and reset the cached LLM provider, if one has been created."""
+    global _provider
+    if _provider is None:
+        return
+    await _provider.aclose()
+    _provider = None
 
 
 def _extract_json(raw: str) -> str:
@@ -174,7 +197,8 @@ async def generate_structured(
                 attempt + 1,
                 raw[:2000],
             )
-    assert last_exc is not None
+    if last_exc is None:
+        raise RuntimeError("structured generation retry loop exited without an error")
     raise last_exc
 
 
