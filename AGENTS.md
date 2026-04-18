@@ -78,6 +78,11 @@ Use `mcp__beads__*` MCP tools directly — never call `bd` via Bash. The `bd` CL
 | Update issue | `mcp__beads__update` |
 | Close issue | `mcp__beads__close` |
 
+**Context efficiency rules — always pass these to avoid loading full content into memory:**
+- `brief=true` on all list/show calls unless you need full detail
+- `max_description_length=200` on list calls
+- `fields=["id","title","status","priority"]` when you only need a summary
+
 **Never use TodoWrite, TaskCreate, or markdown TODO lists.**
 
 ### Filing beads during implementation
