@@ -1,4 +1,7 @@
 {
-  "database": "beads.db",
-  "jsonl_export": "issues.jsonl"
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "embedded",
+  "dolt_database": "chatterbox_tts_lite",
+  "project_id": "8b22b2cb-4392-4717-af6a-f7c5bc9c66f0"
 }
