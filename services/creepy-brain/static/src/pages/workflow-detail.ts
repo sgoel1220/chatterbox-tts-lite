@@ -215,7 +215,7 @@ function renderDetail(wf: WorkflowDetailResponse): string {
         ? esc(c.chunk_text.slice(0, 80)) + "&hellip;"
         : esc(c.chunk_text);
       const audio = c.tts_audio_blob_id
-        ? `<audio class="chunk-audio" preload="none" src="/api/blobs/${c.tts_audio_blob_id}"></audio>`
+        ? `<audio class="chunk-audio" controls preload="none" src="/api/blobs/${c.tts_audio_blob_id}"></audio>`
         : '<span class="muted">-</span>';
       const completed = c.tts_completed_at ? timeAgo(c.tts_completed_at) : "-";
       return `<tr class="chunk-row" data-chunk-idx="${c.chunk_index}">
