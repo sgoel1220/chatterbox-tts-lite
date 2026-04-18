@@ -42,7 +42,7 @@ from app.gpu.lifecycle import (
 )
 from app.llm.image_prompts import generate_scene_image_prompt
 from app.models.enums import BlobType, ChunkStatus
-from app.models.schemas import WorkflowInputSchema
+from app.models.json_schemas import WorkflowInputSchema
 from app.models.workflow import WorkflowScene
 from app.services import blob_service
 from app.services.workflow_service import (
@@ -78,9 +78,7 @@ def _validate_png_response(resp: httpx.Response) -> bytes:
     # Check content type
     content_type = resp.headers.get("content-type", "")
     if "image/png" not in content_type:
-        raise ValueError(
-            f"Expected image/png content type, got: {content_type}"
-        )
+        raise ValueError(f"Expected image/png content type, got: {content_type}")
 
     # Check we have content
     png_bytes: bytes = resp.content
@@ -214,9 +212,7 @@ async def execute(
     )
 
     # Build lookup for existing scenes (resume support)
-    existing_scene_map: dict[int, WorkflowScene] = {
-        s.scene_index: s for s in existing_scenes
-    }
+    existing_scene_map: dict[int, WorkflowScene] = {s.scene_index: s for s in existing_scenes}
 
     # --- 4. Check for completed scenes (resume) and pending scenes ---
     resumed_results: list[SceneImageResult] = []
@@ -224,7 +220,11 @@ async def execute(
 
     for scene in scenes:
         db_scene = existing_scene_map.get(scene.scene_index)
-        if db_scene is not None and db_scene.image_status == ChunkStatus.COMPLETED and db_scene.image_blob_id:
+        if (
+            db_scene is not None
+            and db_scene.image_status == ChunkStatus.COMPLETED
+            and db_scene.image_blob_id
+        ):
             # Scene already completed
             resumed_results.append(_scene_from_db(db_scene, scene.chunk_indices))
         else:
@@ -292,9 +292,7 @@ async def execute(
         except Exception as term_exc:
             log.error("failed to terminate image pod %s: %s", pod.id, term_exc)
 
-    scene_results = sorted(
-        resumed_results + new_results, key=lambda r: r.scene_index
-    )
+    scene_results = sorted(resumed_results + new_results, key=lambda r: r.scene_index)
     output = ImageStepOutput(
         scenes=scene_results,
         pod_id=pod.id,

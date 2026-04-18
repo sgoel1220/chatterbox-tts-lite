@@ -45,7 +45,7 @@ from app.gpu.lifecycle import (
     wait_for_recorded_ready,
 )
 from app.models.enums import BlobType
-from app.models.schemas import GenerateStoryStepOutput, WorkflowInputSchema
+from app.models.json_schemas import GenerateStoryStepOutput, WorkflowInputSchema
 from app.services import blob_service
 from app.services import story_service as _story_service
 from app.services.workflow_service import WorkflowService, get_optional_workflow_id
@@ -58,8 +58,8 @@ log = logging.getLogger(__name__)
 _SYNTHESIZE_PATH = "/synthesize"
 
 # Synthesis parameters (timeouts and retries only - TTS params come from config)
-_MAX_CHUNK_RETRIES = 2       # up to 3 total attempts per chunk
-_MAX_REQUEUE_ROUNDS = 2      # additional retry rounds for failed chunks
+_MAX_CHUNK_RETRIES = 2  # up to 3 total attempts per chunk
+_MAX_REQUEUE_ROUNDS = 2  # additional retry rounds for failed chunks
 _SYNTHESIZE_TIMEOUT_SEC = 120
 
 
@@ -145,7 +145,10 @@ async def execute(input: WorkflowInputSchema, ctx: StepContext) -> TtsStepOutput
 
     log.info(
         "tts_synthesis started workflow_id=%s story_id=%s voice=%s text_len=%d",
-        workflow_run_id, story_id_str, voice_name, len(full_text),
+        workflow_run_id,
+        story_id_str,
+        voice_name,
+        len(full_text),
     )
 
     # --- 2. Normalize full text (LLM call, cached in-process by text hash) ---
@@ -257,7 +260,8 @@ async def _synthesize_all_chunks(
             if requeue_round > 0:
                 log.info(
                     "requeue round %d: retrying %d failed chunk(s)",
-                    requeue_round, len(pending),
+                    requeue_round,
+                    len(pending),
                 )
 
             # Seed offset ensures each round uses fresh seeds
@@ -333,7 +337,9 @@ async def _synthesize_all_chunks(
                     failed.append((idx, chunk_text))
                     log.warning(
                         "chunk %d/%d failed round %d — will %s",
-                        idx + 1, len(chunks), requeue_round,
+                        idx + 1,
+                        len(chunks),
+                        requeue_round,
                         "requeue" if requeue_round < _MAX_REQUEUE_ROUNDS else "save as FAILED",
                     )
 
@@ -341,17 +347,21 @@ async def _synthesize_all_chunks(
 
         # Any chunks still in pending after all rounds are final failures
         for idx, chunk_text in pending:
-            chunk_results.append(TtsChunkResult(
-                index=idx,
-                text=chunk_text,
-                blob_id="",  # last blob was already persisted in the loop
-                duration_sec=0.0,
-                attempts_used=(_MAX_CHUNK_RETRIES + 1) * (_MAX_REQUEUE_ROUNDS + 1),
-                validation_passed=False,
-            ))
+            chunk_results.append(
+                TtsChunkResult(
+                    index=idx,
+                    text=chunk_text,
+                    blob_id="",  # last blob was already persisted in the loop
+                    duration_sec=0.0,
+                    attempts_used=(_MAX_CHUNK_RETRIES + 1) * (_MAX_REQUEUE_ROUNDS + 1),
+                    validation_passed=False,
+                )
+            )
             log.error(
                 "chunk %d/%d: exhausted all %d requeue round(s); marked FAILED",
-                idx + 1, len(chunks), _MAX_REQUEUE_ROUNDS + 1,
+                idx + 1,
+                len(chunks),
+                _MAX_REQUEUE_ROUNDS + 1,
             )
 
     return TtsAllChunksResult(
@@ -425,7 +435,9 @@ async def _synthesize_with_retry(
         if validation.passed:
             log.debug(
                 "chunk %d passed on attempt %d (dur=%.1fs)",
-                chunk_index, attempt + 1, validation.duration_sec,
+                chunk_index,
+                attempt + 1,
+                validation.duration_sec,
             )
             return ChunkSynthesisResult(
                 wav_bytes=candidate,
@@ -436,13 +448,16 @@ async def _synthesize_with_retry(
 
         log.warning(
             "chunk %d validation failed attempt %d: %s",
-            chunk_index, attempt + 1, validation.failure_reason,
+            chunk_index,
+            attempt + 1,
+            validation.failure_reason,
         )
 
     # All attempts exhausted — return best-effort audio flagged as not validated
     log.error(
         "chunk %d: all %d attempt(s) failed validation; saving best-effort audio as FAILED",
-        chunk_index, max_retries + 1,
+        chunk_index,
+        max_retries + 1,
     )
     return ChunkSynthesisResult(
         wav_bytes=best_wav,

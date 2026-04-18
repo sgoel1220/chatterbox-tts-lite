@@ -16,7 +16,13 @@ from app.models.enums import (
     WorkflowStatus,
     WorkflowType,
 )
-from app.models.schemas import WorkflowInputSchema, WorkflowResultSchema
+from app.models.json_schemas import WorkflowInputSchema, WorkflowResultSchema
+from app.validation_limits import (
+    MAX_REVISIONS_MAX,
+    MAX_REVISIONS_MIN,
+    WORKFLOW_TARGET_WORD_COUNT_MAX,
+    WORKFLOW_TARGET_WORD_COUNT_MIN,
+)
 
 
 class CreateWorkflowRequest(WorkflowInputSchema):

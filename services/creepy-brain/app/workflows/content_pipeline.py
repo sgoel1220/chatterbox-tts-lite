@@ -18,7 +18,7 @@ import uuid
 from pydantic import BaseModel
 
 from app.engine import SkippedStepOutput, StepContext, StepDef, WorkflowDef, engine
-from app.models.schemas import WorkflowInputSchema, WorkflowResultSchema
+from app.models.json_schemas import WorkflowInputSchema, WorkflowResultSchema
 from app.services.workflow_service import WorkflowService, get_optional_workflow_id
 
 from .db_helpers import ensure_db, get_session_maker
