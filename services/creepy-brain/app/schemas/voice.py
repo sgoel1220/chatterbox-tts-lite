@@ -16,7 +16,10 @@ class VoiceResponse(BaseModel):
     id: uuid.UUID
     name: str
     description: str | None = None
-    audio_path: str
+    # audio_path holds a filesystem path for built-in voices; None for uploaded voices.
+    audio_path: str | None = None
+    # audio_blob_id holds the blob UUID for uploaded voices; None for built-in voices.
+    audio_blob_id: uuid.UUID | None = None
     is_default: bool
     created_at: datetime
 
