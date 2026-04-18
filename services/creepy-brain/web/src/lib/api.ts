@@ -7,13 +7,59 @@ async function apiFetch<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** Matches backend WorkflowResponse (list endpoint). */
 export interface Workflow {
   id: string;
+  status: "pending" | "running" | "completed" | "failed";
+  workflow_type: string;
+  current_step: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  error: string | null;
+}
+
+export interface WorkflowInput {
+  premise: string;
+  voice_name: string;
+  generate_images: boolean;
+  stitch_video: boolean;
+  max_revisions: number;
+  target_word_count: number;
+}
+
+export interface WorkflowStep {
+  step_name: string;
+  status: string;
+  attempt_number: number;
+  started_at: string | null;
+  completed_at: string | null;
+  error: string | null;
+}
+
+export interface WorkflowChunk {
+  chunk_index: number;
+  tts_status: string;
+  tts_duration_sec: number | null;
+}
+
+export interface WorkflowGpuPod {
+  id: string;
+  provider: string;
   status: string;
   created_at: string;
-  updated_at: string;
-  title?: string;
-  error?: string;
+  ready_at: string | null;
+  terminated_at: string | null;
+  total_cost_cents: number;
+}
+
+/** Matches backend WorkflowDetailResponse (detail endpoint). */
+export interface WorkflowDetail extends Workflow {
+  input: WorkflowInput;
+  result: Record<string, unknown> | null;
+  steps: WorkflowStep[];
+  chunks: WorkflowChunk[];
+  gpu_pods: WorkflowGpuPod[];
 }
 
 export interface GpuPod {
@@ -29,8 +75,8 @@ export function fetchWorkflows(status?: string): Promise<Workflow[]> {
   return apiFetch<Workflow[]>(`/api/workflows${params}`);
 }
 
-export function fetchWorkflow(id: string): Promise<Workflow> {
-  return apiFetch<Workflow>(`/api/workflows/${id}`);
+export function fetchWorkflow(id: string): Promise<WorkflowDetail> {
+  return apiFetch<WorkflowDetail>(`/api/workflows/${id}`);
 }
 
 // NOTE: /api/gpu-pods is not yet implemented in the backend.

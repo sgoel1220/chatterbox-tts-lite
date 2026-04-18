@@ -1,5 +1,5 @@
 import useSWR from "swr";
-import { fetchWorkflows, fetchWorkflow, fetchGpuPods, Workflow, GpuPod } from "./api";
+import { fetchWorkflows, fetchWorkflow, fetchGpuPods, Workflow, WorkflowDetail, GpuPod } from "./api";
 
 export function useWorkflows(status?: string) {
   return useSWR<Workflow[]>(
@@ -10,7 +10,7 @@ export function useWorkflows(status?: string) {
 }
 
 export function useWorkflow(id: string) {
-  return useSWR<Workflow>(
+  return useSWR<WorkflowDetail>(
     ["workflow", id],
     () => fetchWorkflow(id),
     { refreshInterval: 5000 }
