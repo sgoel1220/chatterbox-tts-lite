@@ -12,11 +12,12 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.enums import ChunkStatus
-from app.models.workflow import WorkflowChunk, WorkflowScene
+from app.models.enums import ChunkStatus, StepName, StepStatus, WorkflowStatus
+from app.models.schemas import WorkflowResultSchema
+from app.models.workflow import Workflow, WorkflowChunk, WorkflowScene, WorkflowStep
 
 
 class WorkflowService:
@@ -217,6 +218,110 @@ class WorkflowService:
         await self._session.flush()
 
     # -------------------------------------------------------------------------
+    # Step / workflow lifecycle
+    # -------------------------------------------------------------------------
+
+    async def start_step(
+        self,
+        workflow_id: uuid.UUID,
+        step_name: StepName,
+    ) -> None:
+        """Create (or re-create) a WorkflowStep in RUNNING state (flush only).
+
+        If no step exists yet, or the latest attempt is COMPLETED/FAILED,
+        a new row is created with an incremented ``attempt_number``.
+        """
+        result = await self._session.execute(
+            select(WorkflowStep)
+            .where(
+                WorkflowStep.workflow_id == workflow_id,
+                WorkflowStep.step_name == step_name,
+            )
+            .order_by(desc(WorkflowStep.attempt_number))
+            .limit(1)
+        )
+        latest = result.scalar_one_or_none()
+
+        if latest is None or latest.status in (
+            StepStatus.COMPLETED,
+            StepStatus.FAILED,
+        ):
+            next_attempt = (latest.attempt_number + 1) if latest else 1
+            step = WorkflowStep(
+                workflow_id=workflow_id,
+                step_name=step_name,
+                status=StepStatus.RUNNING,
+                attempt_number=next_attempt,
+                started_at=datetime.now(timezone.utc),
+            )
+            self._session.add(step)
+        else:
+            latest.status = StepStatus.RUNNING
+            latest.started_at = datetime.now(timezone.utc)
+
+        # Update parent workflow
+        wf_result = await self._session.execute(
+            select(Workflow).where(Workflow.id == workflow_id)
+        )
+        wf = wf_result.scalar_one_or_none()
+        if wf is None:
+            raise ValueError(f"Workflow not found: {workflow_id}")
+        wf.current_step = step_name
+        if wf.status == WorkflowStatus.PENDING:
+            wf.status = WorkflowStatus.RUNNING
+            wf.started_at = datetime.now(timezone.utc)
+
+        await self._session.flush()
+
+    async def complete_step(
+        self,
+        workflow_id: uuid.UUID,
+        step_name: StepName,
+    ) -> None:
+        """Mark the RUNNING WorkflowStep as COMPLETED (flush only)."""
+        step = await self._get_running_step_or_raise(workflow_id, step_name)
+        step.status = StepStatus.COMPLETED
+        step.completed_at = datetime.now(timezone.utc)
+        await self._session.flush()
+
+    async def fail_step(
+        self,
+        workflow_id: uuid.UUID,
+        step_name: StepName,
+        error: str,
+    ) -> None:
+        """Mark the RUNNING WorkflowStep as FAILED (flush only)."""
+        step = await self._get_running_step_or_raise(workflow_id, step_name)
+        step.status = StepStatus.FAILED
+        step.error = error
+        step.completed_at = datetime.now(timezone.utc)
+        await self._session.flush()
+
+    async def complete_workflow(
+        self,
+        workflow_id: uuid.UUID,
+        result: WorkflowResultSchema,
+    ) -> None:
+        """Mark the Workflow as COMPLETED with result data (flush only)."""
+        wf = await self._get_workflow_or_raise(workflow_id)
+        wf.status = WorkflowStatus.COMPLETED
+        wf.result_json = result
+        wf.completed_at = datetime.now(timezone.utc)
+        await self._session.flush()
+
+    async def fail_workflow(
+        self,
+        workflow_id: uuid.UUID,
+        error_message: str,
+    ) -> None:
+        """Mark the Workflow as FAILED (flush only)."""
+        wf = await self._get_workflow_or_raise(workflow_id)
+        wf.status = WorkflowStatus.FAILED
+        wf.error = error_message
+        wf.completed_at = datetime.now(timezone.utc)
+        await self._session.flush()
+
+    # -------------------------------------------------------------------------
     # Private helpers
     # -------------------------------------------------------------------------
 
@@ -251,6 +356,34 @@ class WorkflowService:
                 f"WorkflowScene not found: workflow_id={workflow_id} scene_index={scene_index}"
             )
         return scene
+
+    async def _get_running_step_or_raise(
+        self, workflow_id: uuid.UUID, step_name: StepName
+    ) -> WorkflowStep:
+        result = await self._session.execute(
+            select(WorkflowStep).where(
+                WorkflowStep.workflow_id == workflow_id,
+                WorkflowStep.step_name == step_name,
+                WorkflowStep.status == StepStatus.RUNNING,
+            )
+        )
+        step = result.scalar_one_or_none()
+        if step is None:
+            raise ValueError(
+                f"No RUNNING WorkflowStep found: workflow_id={workflow_id} step_name={step_name}"
+            )
+        return step
+
+    async def _get_workflow_or_raise(
+        self, workflow_id: uuid.UUID
+    ) -> Workflow:
+        result = await self._session.execute(
+            select(Workflow).where(Workflow.id == workflow_id)
+        )
+        wf = result.scalar_one_or_none()
+        if wf is None:
+            raise ValueError(f"Workflow not found: {workflow_id}")
+        return wf
 
 
 async def get_chunks_for_image_step(

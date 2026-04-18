@@ -104,11 +104,11 @@ class WorkflowStep(BaseModel):
     )
     # Discriminated union types with Pydantic validation
     input_json: Mapped[Optional[StepInputSchema]] = mapped_column(
-        PydanticType(StepInputSchema),
+        PydanticType(StepInputSchema),  # type: ignore[arg-type]  # Annotated discriminated union
         nullable=True,
     )
     output_json: Mapped[Optional[StepOutputSchema]] = mapped_column(
-        PydanticType(StepOutputSchema),
+        PydanticType(StepOutputSchema),  # type: ignore[arg-type]  # Annotated discriminated union
         nullable=True,
     )
     error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
