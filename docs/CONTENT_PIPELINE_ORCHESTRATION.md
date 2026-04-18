@@ -1,9 +1,11 @@
 # Content Pipeline Workflow Orchestration
 
 > **Project Codename:** creepy-brain
-> **Status:** Planning
+> **Status:** Implemented
 > **Created:** 2026-04-16
-> **Last Updated:** 2026-04-16
+> **Last Updated:** 2026-04-18
+>
+> **NOTE:** This doc was the original planning document. The implementation diverged in one key way: **Hatchet was replaced with a custom workflow engine** (`app/engine/`). References to Hatchet below reflect the original plan, not the current implementation. The custom engine provides DAG execution, step-level retry, pause/resume, and cron scheduling.
 
 ---
 
