@@ -60,3 +60,8 @@ htmlcov/
 memory/.obsidian/
 memory/04_Sessions/Session_Index.md
 memory/04_Sessions/20*.md
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
