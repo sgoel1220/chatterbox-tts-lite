@@ -284,84 +284,196 @@ When implementing beads (work items tracked in the `.beads/` system), **ALWAYS**
 
 ## Current Product Shape
 
-This repo is a **monorepo** containing multiple services for the Creepy Pasta audio production pipeline:
+This repo is a **monorepo** for the Creepy Pasta audio/video production pipeline. It generates horror stories via LLM, synthesizes narration via TTS, generates scene images via SDXL, and stitches everything into a final audio/video artifact.
 
-- **tts-server** — Minimal stateless TTS synthesis (GPU pod)
-- **creepy-brain** — Story generation, TTS orchestration, and workflow engine
+### Services
+
+- **tts-server** (`services/tts-server/`) — Stateless TTS GPU pod (Chatterbox model). Single endpoint: `POST /synthesize`
+- **image-server** (`services/image-server/`) — Stateless image generation GPU pod (SDXL Lightning). Single endpoint: `POST /generate`
+- **creepy-brain** (`services/creepy-brain/`) — Central orchestrator: story generation, text processing, workflow engine, GPU lifecycle, audio stitching, API server
 
 ## Project Structure
 
 ```
 chatterbox-tts-lite/
 ├── services/
-│   ├── tts-server/              # Minimal TTS GPU pod
-│   │   ├── minimal_server.py    # FastAPI app with /synthesize only
+│   ├── tts-server/                  # Stateless TTS GPU pod
+│   │   ├── minimal_server.py        # FastAPI: /synthesize, /health, /ready
+│   │   ├── voices/                  # Reference voice .wav files
 │   │   └── Dockerfile
 │   │
-│   └── creepy-brain/            # Orchestration service
+│   ├── image-server/                # Stateless SDXL GPU pod
+│   │   ├── server.py                # FastAPI: /generate, /health, /ready
+│   │   └── Dockerfile
+│   │
+│   └── creepy-brain/                # Orchestration service
 │       ├── app/
-│       │   ├── text/            # Chunking, normalization (Claude API)
-│       │   ├── audio/           # Validation
-│       │   ├── workflows/       # Hatchet workflow steps
-│       │   ├── gpu/             # RunPod GPU provider
-│       │   └── services/        # Business logic
-│       ├── alembic/
+│       │   ├── main.py              # FastAPI factory + lifespan
+│       │   ├── config.py            # Pydantic Settings
+│       │   ├── db.py                # SQLAlchemy async engine + session
+│       │   ├── engine/              # Custom workflow engine (NOT Hatchet)
+│       │   │   ├── engine.py        # WorkflowEngine: trigger, retry, pause/resume, cancel
+│       │   │   ├── runner.py        # WorkflowRunner: topo-sort steps, execute DAG
+│       │   │   ├── scheduler.py     # CronScheduler: periodic workflows (recon)
+│       │   │   └── models.py        # StepDef, WorkflowDef, StepContext
+│       │   ├── workflows/           # Workflow definitions + step implementations
+│       │   │   ├── content_pipeline.py  # Main pipeline: story → TTS → image → stitch → cleanup
+│       │   │   ├── recon.py         # Orphaned GPU pod cleanup (cron)
+│       │   │   ├── steps/
+│       │   │   │   ├── story.py     # LLM story generation step
+│       │   │   │   ├── tts.py       # Per-chunk TTS synthesis + retry
+│       │   │   │   ├── image.py     # Per-scene image generation
+│       │   │   │   ├── stitch.py    # Audio concat + MP3 encode + video creation
+│       │   │   │   └── cleanup.py   # GPU pod termination
+│       │   │   ├── schemas.py       # Workflow input/output schemas
+│       │   │   └── types.py         # Shared workflow types
+│       │   ├── pipeline/            # LLM story generation pipeline
+│       │   │   ├── orchestrator.py  # run_pipeline(): architect → writer → reviewer loop
+│       │   │   ├── architect.py     # Story outline generation
+│       │   │   ├── writer.py        # Act-by-act writing
+│       │   │   ├── reviewer.py      # Quality review + scoring
+│       │   │   ├── formatting.py    # Output formatting
+│       │   │   └── models.py        # Pipeline data models
+│       │   ├── llm/                 # LLM client abstraction
+│       │   │   ├── client.py        # AnthropicProvider, OpenRouterProvider
+│       │   │   ├── prompts.py       # Story generation prompts
+│       │   │   └── image_prompts.py # Image prompt generation
+│       │   ├── text/                # Text processing
+│       │   │   ├── normalization.py # LLM-based text normalization for TTS
+│       │   │   ├── chunking.py      # Sentence-based text chunking
+│       │   │   └── scene_grouping.py # Group chunks into scenes for images
+│       │   ├── audio/               # Audio processing
+│       │   │   ├── validation.py    # RMS, peak, voiced-ratio checks (numpy)
+│       │   │   └── encoding.py      # WAV → MP3 encoding (soundfile)
+│       │   ├── gpu/                 # GPU provider abstraction
+│       │   │   ├── base.py          # GpuProvider protocol, GpuPodSpec, GpuPod
+│       │   │   ├── runpod.py        # RunPod implementation
+│       │   │   └── lifecycle.py     # DB-tracked pod create/wait/terminate
+│       │   ├── models/              # SQLAlchemy ORM models
+│       │   │   ├── enums.py         # WorkflowStatus, StepStatus, ChunkStatus, etc.
+│       │   │   ├── workflow.py      # Workflow, WorkflowStep, WorkflowChunk
+│       │   │   ├── story.py         # Story, StoryAct
+│       │   │   ├── run.py           # Run, RunChunk
+│       │   │   ├── voice.py         # Voice
+│       │   │   ├── gpu_pod.py       # GpuPod
+│       │   │   └── json_types.py    # JSON column type helpers
+│       │   ├── schemas/             # Pydantic request/response models
+│       │   │   ├── workflow.py, story.py, run.py, voice.py, blob.py, common.py
+│       │   ├── routes/              # FastAPI route handlers
+│       │   │   ├── workflows.py, stories.py, runs.py, voices.py, blobs.py, costs.py, health.py
+│       │   ├── services/            # Business logic layer
+│       │   │   ├── workflow_service.py, story_service.py, run_service.py
+│       │   │   ├── blob_service.py, voice_service.py, cost_service.py
+│       │   │   └── errors.py, http_errors.py
+│       │   ├── logging.py           # Structured logging (structlog)
+│       │   ├── metrics.py           # Prometheus metrics
+│       │   ├── middleware.py         # Request middleware
+│       │   └── validation_limits.py # Audio validation thresholds
+│       ├── alembic/                 # DB migrations (10 versions)
+│       ├── tests/                   # Unit tests
 │       ├── Dockerfile
 │       └── pyproject.toml
 │
-├── AGENTS.md                    # This file
+├── docs/
+│   ├── CONTENT_PIPELINE_ORCHESTRATION.md  # Architecture design doc
+│   └── IMPLEMENTATION_BEADS.md
+├── AGENTS.md                        # This file (canonical)
 ├── CLAUDE.md -> AGENTS.md
 └── README.md
 ```
 
-## TTS Server Architecture
+## Architecture Overview
 
-The TTS server is a **minimal stateless synthesis pod**. All orchestration logic (chunking, normalization, validation, retry) lives in creepy-brain.
+### Workflow Engine
 
-| File | Role |
-|------|------|
-| `minimal_server.py` | FastAPI app with `/synthesize`, `/health`, `/ready` |
-| `Dockerfile` | Slim GPU image (~5 min build vs 15+ min) |
+The project uses a **custom workflow engine** (NOT Hatchet — the original plan was Hatchet but a custom engine was built instead):
 
-## API Endpoints (TTS Server)
+- `WorkflowEngine` — top-level API: trigger, retry_step, pause, resume, cancel
+- `WorkflowRunner` — executes a DAG of steps with topological ordering, persists step state to DB
+- `CronScheduler` — runs periodic workflows (e.g., recon pod cleanup)
+- Supports **pause/resume** at the workflow level and **step-level retry**
+- Each step receives a `StepContext` with DB session, workflow row, GPU provider, and prior step outputs
+
+### Content Pipeline (main workflow)
+
+Steps executed in order:
+1. **story** — Generate story via LLM (architect → writer → reviewer loop)
+2. **tts** — Normalize text, chunk into sentences, synthesize each chunk via TTS pod with retry
+3. **image** — Group chunks into scenes, generate image prompts via LLM, synthesize via image pod
+4. **stitch** — Concatenate WAV chunks → MP3, optionally create video with images
+5. **cleanup** — Terminate all GPU pods associated with the workflow
+
+### GPU Pod Lifecycle
+
+- `GpuProvider` protocol in `gpu/base.py` (RunPod implementation in `gpu/runpod.py`)
+- `gpu/lifecycle.py` — DB-tracked pod creation, readiness polling, termination
+- Recon cron (`workflows/recon.py`) — terminates orphaned pods on a schedule
+
+## GPU Server Endpoints
+
+### TTS Server (port 8005)
 
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/health` | Health check |
 | GET | `/ready` | Readiness check (model loaded?) |
-| POST | `/synthesize` | Stateless TTS: `{text, voice, seed}` → WAV bytes |
+| POST | `/synthesize` | `{text, voice, seed}` → WAV bytes |
 
-## creepy-brain Handles
+### Image Server (port 8006)
 
-| Task | Location |
-|------|----------|
-| Text normalization | `app/text/normalization.py` (Claude API) |
-| Text chunking | `app/text/chunking.py` |
-| Audio validation | `app/audio/validation.py` |
-| Retry with seed increment | `app/workflows/steps/tts.py` |
-| GPU pod lifecycle | `app/gpu/runpod.py` |
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/health` | Health check |
+| GET | `/ready` | Readiness check (model loaded?) |
+| POST | `/generate` | `{prompt, width, height}` → PNG bytes |
+
+## creepy-brain Key Modules
+
+| Module | Purpose |
+|--------|---------|
+| `engine/` | Custom workflow engine with DAG execution, pause/resume, step retry |
+| `pipeline/` | LLM story generation (architect → writer → reviewer) |
+| `llm/client.py` | Anthropic + OpenRouter providers with structured output |
+| `text/normalization.py` | LLM-based text normalization for TTS |
+| `text/chunking.py` | Sentence-based text chunking |
+| `text/scene_grouping.py` | Group chunks into scenes for image generation |
+| `audio/validation.py` | RMS, peak, voiced-ratio checks (numpy) |
+| `audio/encoding.py` | WAV → MP3 encoding |
+| `workflows/steps/tts.py` | Per-chunk synthesis with seed-increment retry |
+| `workflows/steps/image.py` | Per-scene image generation via image pod |
+| `workflows/steps/stitch.py` | Audio concatenation + optional video creation |
+| `workflows/recon.py` | Orphaned GPU pod cleanup cron |
+| `gpu/lifecycle.py` | DB-tracked pod create/wait/terminate |
+| `gpu/runpod.py` | RunPod GPU provider |
 
 ## Commands
 
 ```bash
-# Start the minimal TTS server
+# TTS server
 cd services/tts-server && python3 minimal_server.py
-
-# Syntax-check minimal server
 cd services/tts-server && python3 -m py_compile minimal_server.py && echo OK
+
+# Image server
+cd services/image-server && python3 -m py_compile server.py && echo OK
 
 # creepy-brain
 cd services/creepy-brain && pip install -e .
+
+# Run tests
+cd services/creepy-brain && python3 -m pytest tests/ -v
+
+# Type checking
+cd services/creepy-brain && python3 -m mypy app/ --strict
 ```
 
 ## GPU Rules
 
-- **Always use CUDA directly.** Never use `device_map="auto"` or `accelerate` — this server runs on a single RunPod GPU. Load models with `.to("cuda")` instead.
-- Models cannot coexist in VRAM. When swapping between TTS and SDXL, always unload one before loading the other.
+- **Always use CUDA directly.** Never use `device_map="auto"` or `accelerate` — GPU pods run on a single RunPod GPU. Load models with `.to("cuda")`.
+- Models cannot coexist in VRAM. TTS and SDXL run on **separate pods**.
 
 ## Deploy on RunPod
 
-**NEVER build Docker images locally.** Just push code to GitHub — GitHub Actions builds and pushes images automatically on push to `main` or tags. This saves time and avoids platform issues.
+**NEVER build Docker images locally.** Push to GitHub — GitHub Actions builds and pushes images on push to `main` or tags.
 
 ### Images
 GitHub Container Registry images (built by CI):
@@ -371,7 +483,7 @@ GitHub Container Registry images (built by CI):
 
 ### RunPod Settings
 - Use **community cloud** with spot instances for cost savings
-- **No volume** — models download fresh each start (faster pod spin-up, no storage cost)
+- **No volume** — models download fresh each start
 - Container disk: 20-25 GB
 - Ports: 8005 (TTS), 8006 (image-server)
 
