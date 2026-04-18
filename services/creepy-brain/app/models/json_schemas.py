@@ -36,7 +36,7 @@ class WorkflowInputSchema(BaseModel):
         description="Max story revision attempts",
     )
     target_word_count: int = Field(
-        default=5000,
+        default=200,
         ge=WORKFLOW_TARGET_WORD_COUNT_MIN,
         le=WORKFLOW_TARGET_WORD_COUNT_MAX,
         description="Target word count for story",
@@ -64,7 +64,7 @@ class GenerateStoryStepInput(BaseModel):
     premise: str
     max_revisions: int = Field(default=3, ge=MAX_REVISIONS_MIN, le=MAX_REVISIONS_MAX)
     target_word_count: int = Field(
-        default=5000,
+        default=200,
         ge=WORKFLOW_TARGET_WORD_COUNT_MIN,
         le=WORKFLOW_TARGET_WORD_COUNT_MAX,
     )
