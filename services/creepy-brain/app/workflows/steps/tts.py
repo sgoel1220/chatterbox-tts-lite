@@ -252,10 +252,14 @@ async def execute(input: WorkflowInputSchema, ctx: StepContext) -> TtsStepOutput
 
     # --- 7. Wait for pod ready, then synthesize pending chunks ---
     try:
-        pod = await provider.wait_for_ready(pod.id, timeout_sec=settings.pod_ready_timeout_sec)
-        if pod.endpoint_url is None:
-            raise RuntimeError(f"pod {pod.id} ready but has no endpoint_url")
-        log.info("tts pod ready endpoint=%s", pod.endpoint_url)
+        pod, endpoint_url = await wait_for_recorded_ready(
+            provider,
+            session_maker,
+            pod.id,
+            timeout_sec=settings.pod_ready_timeout_sec,
+            label="tts",
+            service_port=settings.gpu_port,
+        )
 
         # Mark pod ready for cost tracking (start billing clock)
         async with _session_maker() as session:

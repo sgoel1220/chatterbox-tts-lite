@@ -99,28 +99,28 @@ content_pipeline_def = WorkflowDef(
         StepDef(
             name="generate_story",
             fn=story.execute,
-            timeout_sec=900,
+            timeout_sec=3600,
             max_retries=2,
         ),
         StepDef(
             name="tts_synthesis",
             fn=tts.execute,
             parents=["generate_story"],
-            timeout_sec=1800,
+            timeout_sec=86400,
             max_retries=2,
         ),
         StepDef(
             name="image_generation",
             fn=image.execute,
             parents=["tts_synthesis"],
-            timeout_sec=2700,
+            timeout_sec=86400,
             max_retries=2,
         ),
         StepDef(
             name="stitch_final",
             fn=_stitch_final,
             parents=["image_generation"],
-            timeout_sec=300,
+            timeout_sec=3600,
         ),
         StepDef(
             name="cleanup_gpu_pod",

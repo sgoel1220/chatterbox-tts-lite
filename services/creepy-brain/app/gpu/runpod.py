@@ -33,7 +33,11 @@ def _as_raw_pod_list(raw: object) -> list[dict[str, object]]:
 
 
 def _port_endpoint(port: dict[str, object]) -> str | None:
-    """Build an HTTP endpoint from a public RunPod runtime port record."""
+    """Build an HTTP endpoint from a RunPod runtime port record.
+
+    Prefers public IP if available; otherwise returns None (caller
+    should fall back to the proxy URL pattern).
+    """
     if port.get("isIpPublic") is not True:
         return None
 
@@ -64,26 +68,44 @@ def _private_port(port: dict[str, object]) -> int | None:
 def _select_endpoint(
     runtime: object,
     service_port: int | None,
+    pod_id: str | None = None,
 ) -> str | None:
-    """Select the externally reachable endpoint for a pod service."""
+    """Select the externally reachable endpoint for a pod service.
+
+    Tries public IP first.  Falls back to RunPod proxy URL
+    (https://{pod_id}-{port}.proxy.runpod.net) when no public IP is
+    available (common on community cloud / spot instances).
+    """
     if not isinstance(runtime, dict):
+        if pod_id and service_port:
+            return f"https://{pod_id}-{service_port}.proxy.runpod.net"
         return None
 
     raw_ports = runtime.get("ports")
     if not isinstance(raw_ports, list):
+        if pod_id and service_port:
+            return f"https://{pod_id}-{service_port}.proxy.runpod.net"
         return None
 
     ports = [_as_raw_pod(raw_port) for raw_port in raw_ports]
+
+    # Try public IP first.
     if service_port is not None:
         for port in ports:
             if _private_port(port) == service_port:
-                return _port_endpoint(port)
-        return None
+                endpoint = _port_endpoint(port)
+                if endpoint is not None:
+                    return endpoint
+    else:
+        for port in ports:
+            endpoint = _port_endpoint(port)
+            if endpoint is not None:
+                return endpoint
 
-    for port in ports:
-        endpoint = _port_endpoint(port)
-        if endpoint is not None:
-            return endpoint
+    # Fallback: RunPod proxy URL (requires service_port).
+    if pod_id and service_port:
+        return f"https://{pod_id}-{service_port}.proxy.runpod.net"
+
     return None
 
 
@@ -107,12 +129,14 @@ class RunPodProvider(GpuProvider):
 
         if desired == "RUNNING":
             status = GpuPodStatus.RUNNING
-        elif desired in ("EXITED", "TERMINATED"):
+        elif desired == "EXITED":
+            status = GpuPodStatus.STOPPED
+        elif desired == "TERMINATED":
             status = GpuPodStatus.TERMINATED
         else:
             status = GpuPodStatus.CREATING
 
-        endpoint_url = _select_endpoint(raw.get("runtime"), service_port)
+        endpoint_url = _select_endpoint(raw.get("runtime"), service_port, pod_id=pod_id)
 
         machine = raw.get("machine") or {}
         if not isinstance(machine, dict):
@@ -152,8 +176,12 @@ class RunPodProvider(GpuProvider):
 
         # Check for existing pod with same name
         existing = await self._find_pod_by_name(idempotency_key, service_port)
-        if existing and existing.status != GpuPodStatus.TERMINATED:
-            return existing
+        if existing:
+            if existing.status in (GpuPodStatus.RUNNING, GpuPodStatus.CREATING, GpuPodStatus.READY):
+                return existing
+            if existing.status == GpuPodStatus.STOPPED:
+                log.info("Resuming stopped pod %s (name=%s)", existing.id, idempotency_key)
+                return await self.resume_pod(existing.id, spec.gpu_count, service_port)
 
         ports_str = ",".join(f"{p}/http" for p in spec.ports)
         env_dict = spec.env or {}
@@ -172,11 +200,17 @@ class RunPodProvider(GpuProvider):
 
         try:
             raw = _as_raw_pod(await asyncio.to_thread(_create))
+            pod_id = str(raw["id"])
+            # create_pod returns sparse data; fetch full pod info
+            full_pod = await self.get_pod(pod_id, service_port)
+            if full_pod:
+                return full_pod
+            # Fallback to parsing sparse response if get_pod fails
             return self._parse_pod(raw, service_port)
         except Exception:
             # On error, check if pod was created by concurrent call
             recovered = await self._find_pod_by_name(idempotency_key, service_port)
-            if recovered and recovered.status != GpuPodStatus.TERMINATED:
+            if recovered and recovered.status not in (GpuPodStatus.TERMINATED, GpuPodStatus.STOPPED):
                 return recovered
             raise
 
@@ -194,6 +228,22 @@ class RunPodProvider(GpuProvider):
         except Exception:
             log.exception("runpod get_pod failed pod_id=%s", pod_id)
             return None
+
+    async def resume_pod(
+        self, pod_id: str, gpu_count: int = 1, service_port: int | None = None
+    ) -> GpuPod:
+        """Resume a stopped pod via the RunPod SDK."""
+
+        def _resume() -> object:
+            return runpod.resume_pod(pod_id, gpu_count=gpu_count)
+
+        await asyncio.to_thread(_resume)
+        # resume_pod returns sparse data; fetch full pod info
+        full_pod = await self.get_pod(pod_id, service_port)
+        if full_pod:
+            return full_pod
+        msg = f"Pod {pod_id} not found after resume"
+        raise RuntimeError(msg)
 
     async def terminate_pod(self, pod_id: str) -> bool:
         """Terminate a pod."""
@@ -232,7 +282,7 @@ class RunPodProvider(GpuProvider):
                             return pod
                 except (httpx.ConnectError, httpx.TimeoutException):
                     pass
-            await asyncio.sleep(10)
+            await asyncio.sleep(3)
 
         raise TimeoutError(f"Pod {pod_id} did not become ready within {timeout_sec}s")
 
