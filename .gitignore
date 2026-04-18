@@ -46,7 +46,8 @@ hf_cache/
 # Ignore editor/AI tool directories
 .opencode/
 .serena/
-.claude/
+.claude/*
+!.claude/commands/
 
 # Ignore test reports/coverage
 .coverage
