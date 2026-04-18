@@ -41,7 +41,7 @@ async def upload_voice(
     voice_result = await voice_service.get_or_create(
         session,
         name=name,
-        audio_path=str(blob.id),
+        audio_blob_id=blob.id,
         description=description or None,
         is_default=is_default,
     )
