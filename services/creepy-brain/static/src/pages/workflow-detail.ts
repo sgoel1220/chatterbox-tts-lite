@@ -211,8 +211,8 @@ function renderDetail(wf: WorkflowDetailResponse): string {
     const rows = pageChunks.map((c) => {
       const sc = statusClass(c.tts_status);
       const dur = c.tts_duration_sec != null ? `${c.tts_duration_sec.toFixed(1)}s` : "-";
-      const textPreview = c.chunk_text.length > 80
-        ? esc(c.chunk_text.slice(0, 80)) + "&hellip;"
+      const textPreview = c.chunk_text.length > 200
+        ? esc(c.chunk_text.slice(0, 200)) + "&hellip;"
         : esc(c.chunk_text);
       const audio = c.tts_audio_blob_id
         ? `<audio class="chunk-audio" controls preload="none" src="/api/blobs/${c.tts_audio_blob_id}"></audio>`
