@@ -170,18 +170,50 @@ class RunPodProvider(GpuProvider):
             created_at=created_at,
         )
 
-    async def create_pod(self, spec: GpuPodSpec, idempotency_key: str) -> GpuPod:
+    async def create_pod(
+        self,
+        spec: GpuPodSpec,
+        idempotency_key: str,
+        pull_stuck_timeout_sec: int = 480,
+    ) -> GpuPod:
         """Create a new GPU pod using the RunPod SDK."""
+        from .base import ImagePullStuckError
+
         service_port = spec.ports[0] if spec.ports else 8005
 
         # Check for existing pod with same name
         existing = await self._find_pod_by_name(idempotency_key, service_port)
         if existing:
-            if existing.status in (GpuPodStatus.RUNNING, GpuPodStatus.CREATING, GpuPodStatus.READY):
+            if existing.status in (GpuPodStatus.RUNNING, GpuPodStatus.READY):
                 return existing
             if existing.status == GpuPodStatus.STOPPED:
                 log.info("Resuming stopped pod %s (name=%s)", existing.id, idempotency_key)
                 return await self.resume_pod(existing.id, spec.gpu_count, service_port)
+            if existing.status == GpuPodStatus.CREATING:
+                # Pod exists but has no runtime yet — check if it's been stuck pulling.
+                age_sec: float | None = None
+                if existing.created_at is not None:
+                    age_sec = (datetime.now(timezone.utc) - existing.created_at).total_seconds()
+
+                if age_sec is None or age_sec >= pull_stuck_timeout_sec:
+                    log.warning(
+                        "create_pod: existing pod %s (name=%s) has been CREATING for %s — "
+                        "terminating to create fresh pod",
+                        existing.id,
+                        idempotency_key,
+                        f"{int(age_sec)}s" if age_sec is not None else "unknown duration",
+                    )
+                    try:
+                        await self.terminate_pod(existing.id)
+                    except Exception:
+                        log.exception(
+                            "create_pod: failed to terminate stuck pod %s", existing.id
+                        )
+                    raise ImagePullStuckError(
+                        f"Terminated stuck-creating pod {existing.id}; retry to create fresh pod"
+                    )
+                # Young CREATING pod — return it and let wait_for_ready handle it.
+                return existing
 
         ports_str = ",".join(f"{p}/http" for p in spec.ports)
         env_dict = spec.env or {}
@@ -264,7 +296,11 @@ class RunPodProvider(GpuProvider):
             return False
 
     async def wait_for_ready(
-        self, pod_id: str, timeout_sec: int = 1200, service_port: int | None = None
+        self,
+        pod_id: str,
+        timeout_sec: int = 1200,
+        service_port: int | None = None,
+        pull_stuck_timeout_sec: int = 480,
     ) -> GpuPod:
         """Wait for pod to be ready (health check passes).
 
@@ -273,17 +309,24 @@ class RunPodProvider(GpuProvider):
             timeout_sec: Maximum time to wait for the pod to become ready.
             service_port: The service port to use for endpoint URL construction.
                 If not specified, defaults to 8005 (TTS server). Use 8006 for image server.
+            pull_stuck_timeout_sec: If the pod has no runtime (image still pulling)
+                for longer than this many seconds, terminate it and raise
+                ImagePullStuckError so the caller can create a fresh pod.
         """
-        deadline = asyncio.get_event_loop().time() + timeout_sec
+        from .base import ImagePullStuckError
+
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout_sec
         last_status: str = ""
         elapsed_log_interval = 30  # log status every 30 s
-        last_log_time = asyncio.get_event_loop().time()
+        last_log_time = loop.time()
+        pull_stuck_since: float | None = None  # wall time when we first saw runtime=None
 
-        while asyncio.get_event_loop().time() < deadline:
+        while loop.time() < deadline:
             pod = await self.get_pod(pod_id, service_port)
             current_status = pod.status.value if pod else "unknown"
 
-            now = asyncio.get_event_loop().time()
+            now = loop.time()
             if current_status != last_status or (now - last_log_time) >= elapsed_log_interval:
                 elapsed = int(now - (deadline - timeout_sec))
                 log.info(
@@ -294,6 +337,8 @@ class RunPodProvider(GpuProvider):
                 last_log_time = now
 
             if pod and pod.endpoint_url:
+                # Reset pull-stuck timer — the runtime appeared.
+                pull_stuck_since = None
                 try:
                     async with httpx.AsyncClient(timeout=5.0) as client:
                         r = await client.get(f"{pod.endpoint_url}/health")
@@ -306,6 +351,24 @@ class RunPodProvider(GpuProvider):
                             return pod
                 except (httpx.ConnectError, httpx.TimeoutException):
                     pass
+            else:
+                # No endpoint yet — image may still be pulling.
+                if pull_stuck_since is None:
+                    pull_stuck_since = now
+                elif now - pull_stuck_since >= pull_stuck_timeout_sec:
+                    stuck_secs = int(now - pull_stuck_since)
+                    log.warning(
+                        "wait_for_ready pod=%s image pull stuck for %ds — terminating",
+                        pod_id, stuck_secs,
+                    )
+                    try:
+                        await self.terminate_pod(pod_id)
+                    except Exception:
+                        log.exception("wait_for_ready: failed to terminate stuck pod %s", pod_id)
+                    raise ImagePullStuckError(
+                        f"Pod {pod_id} image pull stuck for {stuck_secs}s; pod terminated"
+                    )
+
             await asyncio.sleep(5)
 
         raise TimeoutError(f"Pod {pod_id} did not become ready within {timeout_sec}s")

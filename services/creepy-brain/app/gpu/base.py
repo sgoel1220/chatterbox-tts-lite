@@ -15,6 +15,10 @@ from datetime import datetime
 from app.models.enums import GpuPodStatus
 
 
+class ImagePullStuckError(RuntimeError):
+    """Raised when a pod's image pull has been stuck for too long."""
+
+
 class GpuPodSpec(BaseModel):
     """Spec for creating a GPU pod. Defaults loaded from config."""
 
