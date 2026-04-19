@@ -31,9 +31,10 @@ from app.services.workflow_service import (
     ChunkForImageStep,
     get_chunks_for_image_step,
     get_optional_workflow_id,
+    get_scenes_for_workflow,
 )
 from app.workflows.db_helpers import get_session_maker
-from app.workflows.steps.image import ImageStepOutput, SceneImageResult
+from app.workflows.steps.image import SceneImageResult
 
 log = structlog.get_logger(__name__)
 
@@ -228,17 +229,42 @@ async def execute(input: WorkflowInputSchema, ctx: StepContext) -> StitchStepOut
 
     # --- 5. Create video if images exist ---
     if needs_video:
-        image_step_output = ImageStepOutput.model_validate(image_output)
+        # Load scenes from DB so this works on resume/fork paths where output_json may be empty.
+        async with session_maker() as session:
+            db_scenes = await get_scenes_for_workflow(session, workflow_id)
+
+        # Build scene_id → chunk_indices from already-loaded chunk_data.
+        scene_chunk_map: dict[str, list[int]] = {}
+        for c in chunk_data:
+            if c.scene_id:
+                scene_chunk_map.setdefault(c.scene_id, []).append(c.index)
+
+        completed_scenes = [sc for sc in db_scenes if sc.image_blob_id is not None]
+        if not completed_scenes:
+            log.warning("stitch_final: no completed scenes in DB, skipping video")
+            needs_video = False
+
+    if needs_video:
+        scene_results = [
+            SceneImageResult(
+                scene_index=sc.scene_index,
+                chunk_indices=sorted(scene_chunk_map.get(str(sc.id), [])),
+                image_blob_id=str(sc.image_blob_id),
+                image_prompt=sc.image_prompt or "",
+                image_negative_prompt=sc.image_negative_prompt or "",
+            )
+            for sc in completed_scenes
+        ]
         log.info(
             "stitch_final: creating video with %d scene images",
-            len(image_step_output.scenes),
+            len(scene_results),
         )
 
         chunk_durations: dict[int, float] = {
             c.index: (c.duration_sec or 0.0) for c in chunk_data
         }
         video_blob_id = await _create_video(
-            scenes=image_step_output.scenes,
+            scenes=scene_results,
             mp3_bytes=mp3_bytes,
             workflow_id=workflow_id,
             session_maker=session_maker,
