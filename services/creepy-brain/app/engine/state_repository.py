@@ -115,24 +115,27 @@ class WorkflowStateRepository:
                 update_fn(wf)
             await session.commit()
 
-    async def set_workflow_status_running(self, workflow_id: uuid.UUID) -> None:
-        """Transition workflow to RUNNING unless it is already COMPLETED."""
-        def _update(wf: Any) -> None:
-            if wf.status != WorkflowStatus.COMPLETED:
-                wf.status = WorkflowStatus.RUNNING
-        await self._update_workflow(workflow_id, _update)
+    
 
-    async def mark_workflow_cancelled(self, workflow_id: uuid.UUID) -> None:
-        """Mark a workflow CANCELLED and set completed_at."""
-        def _update(wf: Any) -> None:
-            wf.status = WorkflowStatus.CANCELLED
-            wf.completed_at = datetime.now(timezone.utc)
-        await self._update_workflow(workflow_id, _update)
+    
 
     async def set_workflow_status(
         self,
         workflow_id: uuid.UUID,
         status: WorkflowStatus,
     ) -> None:
-        """Set workflow to an arbitrary status."""
-        await self._update_workflow(workflow_id, lambda wf: setattr(wf, "status", status))
+        """Set workflow to *status* with status-appropriate side effects.
+
+        - RUNNING: only applied when the workflow is not already COMPLETED.
+        - CANCELLED: also stamps ``completed_at``.
+        - All other statuses: applied unconditionally.
+        """
+
+        def _update(wf: Any) -> None:
+            if status == WorkflowStatus.RUNNING and wf.status == WorkflowStatus.COMPLETED:
+                return
+            wf.status = status
+            if status == WorkflowStatus.CANCELLED:
+                wf.completed_at = datetime.now(timezone.utc)
+
+        await self._update_workflow(workflow_id, _update)

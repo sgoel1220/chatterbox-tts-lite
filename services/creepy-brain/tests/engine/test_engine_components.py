@@ -140,7 +140,7 @@ class TestWorkflowTaskSupervisor:
             run_id = await engine.trigger(workflow_def.name, workflow_input, workflow_id)
 
         assert run_id == str(workflow_id)
-        runner_cls.assert_called_once_with(workflow_def, workflow_input, workflow_id)
+        runner_cls.assert_called_once_with(workflow_def, workflow_input, workflow_id, None)
         assert created_tasks[0]["name"] == f"workflow-{workflow_id}"
         assert engine._tasks[run_id] is created_tasks[0]["task"]
         assert engine._runners[run_id] is runner
@@ -179,8 +179,8 @@ class TestWorkflowTaskSupervisor:
             str(marked_workflow_id): marked_task,
             str(unmarked_workflow_id): unmarked_task,
         }
-        engine._mark_workflow_cancelled = AsyncMock(  # type: ignore[method-assign]
-            name="_mark_workflow_cancelled"
+        engine._set_workflow_status = AsyncMock(  # type: ignore[method-assign]
+            name="_set_workflow_status"
         )
         await asyncio.sleep(0)
 
@@ -192,7 +192,9 @@ class TestWorkflowTaskSupervisor:
         assert marked_task.cancelled()
         assert unmarked_task.cancelled()
         assert engine._tasks == {}
-        engine._mark_workflow_cancelled.assert_awaited_once_with(marked_workflow_id)
+        engine._set_workflow_status.assert_awaited_once_with(
+            marked_workflow_id, WorkflowStatus.CANCELLED
+        )
 
     async def test_run_and_cleanup_removes_task_after_runner_completes(self) -> None:
         engine = WorkflowEngine()
@@ -231,8 +233,8 @@ class TestWorkflowRetryResumeController:
         engine._reset_steps_in_db = AsyncMock(  # type: ignore[method-assign]
             name="_reset_steps_in_db"
         )
-        engine._set_workflow_status_running = AsyncMock(  # type: ignore[method-assign]
-            name="_set_workflow_status_running"
+        engine._set_workflow_status = AsyncMock(  # type: ignore[method-assign]
+            name="_set_workflow_status"
         )
 
         with (
@@ -252,7 +254,9 @@ class TestWorkflowRetryResumeController:
             workflow_id,
             {StepName.TTS_SYNTHESIS.value, StepName.STITCH_FINAL.value},
         )
-        engine._set_workflow_status_running.assert_awaited_once_with(workflow_id)
+        engine._set_workflow_status.assert_awaited_once_with(
+            workflow_id, WorkflowStatus.RUNNING
+        )
         runner_cls.assert_called_once_with(
             workflow_def,
             existing_runner.workflow_input,
@@ -340,7 +344,7 @@ class TestWorkflowRetryResumeController:
         engine._set_workflow_status.assert_awaited_once_with(
             workflow_id, WorkflowStatus.RUNNING
         )
-        runner_cls.assert_called_once_with(workflow_def, workflow_input, workflow_id)
+        runner_cls.assert_called_once_with(workflow_def, workflow_input, workflow_id, None)
         assert engine._runners[run_id] is new_runner
         assert engine._tasks[run_id] is created_tasks[0]["task"]
 
@@ -394,15 +398,17 @@ class TestWorkflowStateRepository:
             "optional_session",
             return_value=_AsyncContext(session),
         ):
-            await engine._set_workflow_status_running(uuid.uuid4())
-            await engine._set_workflow_status_running(uuid.uuid4())
+            await engine._set_workflow_status(uuid.uuid4(), WorkflowStatus.RUNNING)
+            await engine._set_workflow_status(uuid.uuid4(), WorkflowStatus.RUNNING)
 
         assert completed_workflow.status == WorkflowStatus.COMPLETED
         assert failed_workflow.status == WorkflowStatus.RUNNING
         assert session.execute.await_count == 2
         assert session.commit.await_count == 2
 
-    async def test_mark_workflow_cancelled_sets_cancelled_and_completed_at(self) -> None:
+    async def test_set_workflow_status_cancelled_sets_cancelled_and_completed_at(
+        self,
+    ) -> None:
         engine = WorkflowEngine()
         workflow = MagicMock()
         workflow.status = WorkflowStatus.RUNNING
@@ -416,7 +422,7 @@ class TestWorkflowStateRepository:
             "optional_session",
             return_value=_AsyncContext(session),
         ):
-            await engine._mark_workflow_cancelled(uuid.uuid4())
+            await engine._set_workflow_status(uuid.uuid4(), WorkflowStatus.CANCELLED)
 
         assert workflow.status == WorkflowStatus.CANCELLED
         assert isinstance(workflow.completed_at, datetime)

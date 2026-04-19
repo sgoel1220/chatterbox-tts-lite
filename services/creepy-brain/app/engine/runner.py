@@ -18,6 +18,7 @@ import asyncio
 import collections
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 from importlib import import_module
 from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
 
@@ -222,7 +223,13 @@ class StepLifecycleRepository:
             return output
         return None
 
-    async def _db_start_step(self, step_name: str) -> None:
+    async def _run_step_op(
+        self,
+        step_name: str,
+        op_name: str,
+        action: Callable[[Any, Any], Awaitable[None]],
+    ) -> None:
+        """Validate *step_name*, open a session, call *action*, commit, and log errors."""
         try:
             name_enum = StepName(step_name)
         except ValueError:
@@ -231,57 +238,36 @@ class StepLifecycleRepository:
             async with optional_session() as session:
                 if session is None:
                     return
-                await WorkflowService(session).start_step(self._workflow_id, name_enum)
+                await action(WorkflowService(session), name_enum)
                 await session.commit()
         except Exception as exc:
             log.error(
-                "workflow %s: _db_start_step '%s' failed: %s",
+                "workflow %s: %s '%s' failed: %s",
                 self._workflow_id,
+                op_name,
                 step_name,
                 exc,
             )
+
+    async def _db_start_step(self, step_name: str) -> None:
+        await self._run_step_op(
+            step_name, "_db_start_step",
+            lambda svc, n: svc.start_step(self._workflow_id, n),
+        )
 
     async def _db_complete_step(self, step_name: str, output: BaseModel) -> None:
-        try:
-            name_enum = StepName(step_name)
-        except ValueError:
-            return
-        try:
-            async with optional_session() as session:
-                if session is None:
-                    return
-                await WorkflowService(session).complete_step(
-                    self._workflow_id,
-                    name_enum,
-                    output=self._as_step_output_schema(output),
-                )
-                await session.commit()
-        except Exception as exc:
-            log.error(
-                "workflow %s: _db_complete_step '%s' failed: %s",
-                self._workflow_id,
-                step_name,
-                exc,
-            )
+        await self._run_step_op(
+            step_name, "_db_complete_step",
+            lambda svc, n: svc.complete_step(
+                self._workflow_id, n, output=self._as_step_output_schema(output)
+            ),
+        )
 
     async def _db_fail_step(self, step_name: str, error: str) -> None:
-        try:
-            name_enum = StepName(step_name)
-        except ValueError:
-            return
-        try:
-            async with optional_session() as session:
-                if session is None:
-                    return
-                await WorkflowService(session).fail_step(self._workflow_id, name_enum, error)
-                await session.commit()
-        except Exception as exc:
-            log.error(
-                "workflow %s: _db_fail_step '%s' failed: %s",
-                self._workflow_id,
-                step_name,
-                exc,
-            )
+        await self._run_step_op(
+            step_name, "_db_fail_step",
+            lambda svc, n: svc.fail_step(self._workflow_id, n, error),
+        )
 
     async def _fail_workflow(self, error: str) -> None:
         try:

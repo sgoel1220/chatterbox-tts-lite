@@ -85,8 +85,6 @@ class WorkflowEngine:
         workflow_id: uuid.UUID,
         completed_outputs: StepOutputMap | None,
     ) -> WorkflowRunnerProtocol:
-        if completed_outputs is None:
-            return WorkflowRunner(workflow_def, workflow_input, workflow_id)
         return WorkflowRunner(workflow_def, workflow_input, workflow_id, completed_outputs)
 
     def _create_task(
@@ -116,7 +114,7 @@ class WorkflowEngine:
             step_name,
             cancel_task=self._cancel_task,
             reset_steps_in_db=self._reset_steps_in_db,
-            set_workflow_status_running=self._set_workflow_status_running,
+            set_workflow_status=self._set_workflow_status,
             resume_from_db=self.resume_from_db,
         )
 
@@ -163,7 +161,7 @@ class WorkflowEngine:
         await self._task_supervisor.cancel_task(
             run_id,
             mark_cancelled_in_db=mark_cancelled_in_db,
-            mark_workflow_cancelled=self._mark_workflow_cancelled,
+            set_workflow_status=self._set_workflow_status,
         )
 
     async def _reset_steps_in_db(
@@ -173,11 +171,9 @@ class WorkflowEngine:
     ) -> None:
         await self._state_repository.reset_steps(workflow_id, step_names)
 
-    async def _set_workflow_status_running(self, workflow_id: uuid.UUID) -> None:
-        await self._state_repository.set_workflow_status_running(workflow_id)
+    
 
-    async def _mark_workflow_cancelled(self, workflow_id: uuid.UUID) -> None:
-        await self._state_repository.mark_workflow_cancelled(workflow_id)
+    
 
     async def _set_workflow_status(
         self,

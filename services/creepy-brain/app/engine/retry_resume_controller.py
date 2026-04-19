@@ -13,6 +13,7 @@ from .state_repository import WorkflowStateRepository
 from .task_supervisor import (
     CancelTaskCallback,
     RunnerFactory,
+    SetWorkflowStatus,
     WorkflowTaskSupervisor,
 )
 
@@ -30,19 +31,6 @@ class ResetStepsInDb(Protocol):
     async def __call__(self, workflow_id: uuid.UUID, step_names: set[str]) -> None:
         """Reset step rows."""
 
-
-class SetWorkflowStatusRunning(Protocol):
-    """Callable shape for setting a workflow RUNNING."""
-
-    async def __call__(self, workflow_id: uuid.UUID) -> None:
-        """Set workflow RUNNING."""
-
-
-class SetWorkflowStatus(Protocol):
-    """Callable shape for setting workflow status."""
-
-    async def __call__(self, workflow_id: uuid.UUID, status: WorkflowStatus) -> None:
-        """Set workflow status."""
 
 
 class ResumeFromDb(Protocol):
@@ -74,7 +62,7 @@ class WorkflowRetryResumeController:
         *,
         cancel_task: CancelTaskCallback,
         reset_steps_in_db: ResetStepsInDb,
-        set_workflow_status_running: SetWorkflowStatusRunning,
+        set_workflow_status: SetWorkflowStatus,
         resume_from_db: ResumeFromDb,
     ) -> None:
         """Reset a step and all downstream steps, then resume the workflow."""
@@ -128,7 +116,7 @@ class WorkflowRetryResumeController:
             log.error("engine: retry_step failed to reset DB steps for %s: %s", run_id, exc)
 
         try:
-            await set_workflow_status_running(workflow_id)
+            await set_workflow_status(workflow_id, WorkflowStatus.RUNNING)
         except Exception as exc:
             log.error("engine: retry_step failed to update workflow status for %s: %s", run_id, exc)
 
