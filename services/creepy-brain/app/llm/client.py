@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+import uuid
 from collections.abc import Iterable
+from contextvars import ContextVar
 from typing import Any, Protocol, TYPE_CHECKING, TypeVar, cast
 
 import httpx
@@ -19,6 +21,43 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
+
+# ── Workflow context for LLM cost attribution ───────────────────────────────
+
+_workflow_context: ContextVar[uuid.UUID | None] = ContextVar(
+    "llm_workflow_id", default=None
+)
+
+
+def set_llm_workflow_context(workflow_id: uuid.UUID | None) -> None:
+    """Set the workflow UUID that LLM calls should be attributed to."""
+    _workflow_context.set(workflow_id)
+
+
+async def _persist_llm_usage(
+    workflow_id: uuid.UUID, model: str, usage: dict[str, Any]
+) -> None:
+    """Persist token usage to the llm_usage table (best-effort, swallows errors)."""
+    try:
+        from app.workflows.db_helpers import get_session_maker
+        from app.models.llm_usage import LlmUsage
+        from app.llm.pricing import calculate_cost_cents
+
+        input_t = int(usage.get("prompt_tokens", 0))
+        output_t = int(usage.get("completion_tokens", 0))
+        async with get_session_maker()() as session:
+            session.add(
+                LlmUsage(
+                    workflow_id=workflow_id,
+                    model=model,
+                    input_tokens=input_t,
+                    output_tokens=output_t,
+                    cost_cents=calculate_cost_cents(model, input_t, output_t),
+                )
+            )
+            await session.commit()
+    except Exception:
+        log.warning("llm usage persist failed", exc_info=True)
 
 MAX_RETRIES = 3
 RETRY_BASE_DELAY = 5  # seconds
@@ -96,6 +135,9 @@ class OpenRouterProvider:
             usage.get("prompt_tokens", "?"),
             usage.get("completion_tokens", "?"),
         )
+        wf_id = _workflow_context.get()
+        if wf_id is not None:
+            await _persist_llm_usage(wf_id, self._model, usage)
         return content
 
     async def aclose(self) -> None:

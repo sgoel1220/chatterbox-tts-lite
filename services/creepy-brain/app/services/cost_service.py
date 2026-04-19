@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import GpuPodStatus, GpuProvider
 from app.models.gpu_pod import GpuPod
+from app.models.llm_usage import LlmUsage
 
 
 class CostSummary(BaseModel):
@@ -20,9 +21,11 @@ class CostSummary(BaseModel):
 
 
 class WorkflowCost(BaseModel):
-    """Cost for a single workflow."""
+    """Cost for a single workflow (GPU + LLM)."""
 
     workflow_id: str
+    gpu_cost_cents: int
+    llm_cost_cents: int
     total_cost_cents: int
     pod_count: int
 
@@ -109,33 +112,66 @@ class CostService:
         await self._session.commit()
         return pod.total_cost_cents
 
-    async def get_workflow_cost(self, workflow_id: uuid.UUID) -> int:
-        """Sum cost of all pods for a workflow."""
-        result = await self._session.execute(
-            select(func.coalesce(func.sum(GpuPod.total_cost_cents), 0)).where(
-                GpuPod.workflow_id == workflow_id
+    async def get_workflow_cost(self, workflow_id: uuid.UUID) -> WorkflowCost:
+        """Return GPU + LLM cost breakdown for a workflow."""
+        gpu_result = await self._session.execute(
+            select(
+                func.coalesce(func.sum(GpuPod.total_cost_cents), 0),
+                func.count(GpuPod.id),
+            ).where(GpuPod.workflow_id == workflow_id)
+        )
+        gpu_row = gpu_result.one()
+        gpu_cents = int(gpu_row[0])
+        pod_count = int(gpu_row[1])
+
+        llm_result = await self._session.execute(
+            select(func.coalesce(func.sum(LlmUsage.cost_cents), 0)).where(
+                LlmUsage.workflow_id == workflow_id
             )
         )
-        return int(result.scalar_one())
+        llm_cents = int(llm_result.scalar_one())
+
+        return WorkflowCost(
+            workflow_id=str(workflow_id),
+            gpu_cost_cents=gpu_cents,
+            llm_cost_cents=llm_cents,
+            total_cost_cents=gpu_cents + llm_cents,
+            pod_count=pod_count,
+        )
 
     async def get_summary(self) -> CostSummary:
-        """Get aggregated cost summary (today, month, active pods)."""
+        """Get aggregated cost summary (today, month, active pods). Includes GPU + LLM."""
         today = date.today()
         month_start = today.replace(day=1)
+        month_start_dt = datetime.combine(month_start, datetime.min.time(), timezone.utc)
 
-        today_result = await self._session.execute(
+        gpu_today_result = await self._session.execute(
             select(func.coalesce(func.sum(GpuPod.total_cost_cents), 0)).where(
                 func.date(GpuPod.created_at) == today
             )
         )
-        today_cents = int(today_result.scalar_one())
+        gpu_today = int(gpu_today_result.scalar_one())
 
-        month_result = await self._session.execute(
+        gpu_month_result = await self._session.execute(
             select(func.coalesce(func.sum(GpuPod.total_cost_cents), 0)).where(
-                GpuPod.created_at >= datetime.combine(month_start, datetime.min.time(), timezone.utc)
+                GpuPod.created_at >= month_start_dt
             )
         )
-        month_cents = int(month_result.scalar_one())
+        gpu_month = int(gpu_month_result.scalar_one())
+
+        llm_today_result = await self._session.execute(
+            select(func.coalesce(func.sum(LlmUsage.cost_cents), 0)).where(
+                func.date(LlmUsage.created_at) == today
+            )
+        )
+        llm_today = int(llm_today_result.scalar_one())
+
+        llm_month_result = await self._session.execute(
+            select(func.coalesce(func.sum(LlmUsage.cost_cents), 0)).where(
+                LlmUsage.created_at >= month_start_dt
+            )
+        )
+        llm_month = int(llm_month_result.scalar_one())
 
         active_result = await self._session.execute(
             select(func.count(GpuPod.id)).where(
@@ -145,7 +181,7 @@ class CostService:
         active_count = int(active_result.scalar_one())
 
         return CostSummary(
-            today_cents=today_cents,
-            month_cents=month_cents,
+            today_cents=gpu_today + llm_today,
+            month_cents=gpu_month + llm_month,
             active_pod_count=active_count,
         )

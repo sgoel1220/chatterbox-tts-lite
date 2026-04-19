@@ -77,13 +77,18 @@ async def execute(input: WorkflowInputSchema, ctx: StepContext) -> GenerateStory
 
     log.info("story %s created, starting pipeline", story_id)
 
-    async with session_maker() as session:
-        await orchestrator.run_pipeline(
-            story_id=story_id,
-            premise=premise,
-            session=session,
-            target_word_count=input.target_word_count,
-        )
+    from app.llm.client import set_llm_workflow_context
+    set_llm_workflow_context(workflow_uuid)
+    try:
+        async with session_maker() as session:
+            await orchestrator.run_pipeline(
+                story_id=story_id,
+                premise=premise,
+                session=session,
+                target_word_count=input.target_word_count,
+            )
+    finally:
+        set_llm_workflow_context(None)
 
     async with session_maker() as session:
         completed_story = await story_service.get(session, story_id)

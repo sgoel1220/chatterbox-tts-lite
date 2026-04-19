@@ -108,6 +108,14 @@ export interface CostSummary {
   active_pod_count: number;
 }
 
+export interface WorkflowCost {
+  workflow_id: string;
+  gpu_cost_cents: number;
+  llm_cost_cents: number;
+  total_cost_cents: number;
+  pod_count: number;
+}
+
 export interface StoryAct {
   act_number: number;
   title: string | null;
@@ -194,6 +202,10 @@ export function encodeToMp3(id: string): Promise<EncodeMp3Response> {
 
 export function fetchCostSummary(): Promise<CostSummary> {
   return api("/api/costs/summary");
+}
+
+export function fetchWorkflowCost(id: string): Promise<WorkflowCost> {
+  return api(`/api/costs/workflow/${id}`);
 }
 
 export interface CreateWorkflowRequest {
