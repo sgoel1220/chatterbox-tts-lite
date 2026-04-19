@@ -520,14 +520,51 @@ function renderDetail(wf: WorkflowDetailResponse): string {
     `);
   }
 
-  // Result
+  // Output (stitched audio / video)
   if (wf.result) {
-    parts.push(`
-      <div class="section">
-        <h3>Result</h3>
-        <pre class="code-block">${esc(JSON.stringify(wf.result, null, 2))}</pre>
-      </div>
-    `);
+    const r = wf.result;
+    const outputParts: string[] = [];
+
+    if (r.final_audio_blob_id) {
+      const audioUrl = `/api/blobs/${r.final_audio_blob_id}`;
+      outputParts.push(`
+        <div class="output-block">
+          <h4>Audio</h4>
+          <audio controls preload="metadata" style="width:100%">
+            <source src="${audioUrl}" type="audio/mpeg">
+          </audio>
+          <div class="output-meta">
+            ${r.total_duration_sec != null ? `<span>${duration(r.total_duration_sec)}</span>` : ""}
+            ${r.chunk_count != null ? `<span>${r.chunk_count} chunks</span>` : ""}
+            <a href="${audioUrl}" download="audio.mp3" class="btn btn-sm">Download MP3</a>
+          </div>
+        </div>
+      `);
+    }
+
+    if (r.final_video_blob_id) {
+      const videoUrl = `/api/blobs/${r.final_video_blob_id}`;
+      outputParts.push(`
+        <div class="output-block">
+          <h4>Video</h4>
+          <video controls preload="metadata" style="width:100%">
+            <source src="${videoUrl}" type="video/mp4">
+          </video>
+          <div class="output-meta">
+            <a href="${videoUrl}" download="video.mp4" class="btn btn-sm">Download MP4</a>
+          </div>
+        </div>
+      `);
+    }
+
+    if (outputParts.length > 0) {
+      parts.push(`
+        <div class="section">
+          <h3>Output</h3>
+          ${outputParts.join("")}
+        </div>
+      `);
+    }
   }
 
   return parts.join("");
