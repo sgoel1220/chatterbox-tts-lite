@@ -101,6 +101,7 @@ content_pipeline_def = WorkflowDef(
             fn=story.execute,
             timeout_sec=3600,
             max_retries=2,
+            auto_pause_after=True,
         ),
         StepDef(
             name="tts_synthesis",
