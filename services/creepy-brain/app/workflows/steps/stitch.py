@@ -37,7 +37,6 @@ from app.workflows.db_helpers import get_session_maker
 log = structlog.get_logger(__name__)
 
 # ffmpeg video constants
-_FRAMERATE = "1/5"  # 5 seconds per image
 _VIDEO_SCALE = "1280:720"  # output dimensions (W:H)
 
 
@@ -234,11 +233,15 @@ async def execute(input: WorkflowInputSchema, ctx: StepContext) -> StitchStepOut
             len(image_step_output.scenes),
         )
 
+        chunk_durations: dict[int, float] = {
+            c.index: (c.duration_sec or 0.0) for c in chunk_data
+        }
         video_blob_id = await _create_video(
             scenes=image_step_output.scenes,
             mp3_bytes=mp3_bytes,
             workflow_id=workflow_id,
             session_maker=session_maker,
+            chunk_durations=chunk_durations,
         )
         output.final_video_blob_id = str(video_blob_id)
         log.info("stitch_final: saved final video blob_id=%s", video_blob_id)
@@ -259,14 +262,19 @@ async def _create_video(
     mp3_bytes: bytes,
     workflow_id: uuid.UUID,
     session_maker: async_sessionmaker[AsyncSession],
+    chunk_durations: dict[int, float],
 ) -> uuid.UUID:
     """Create video from scene images and audio using ffmpeg.
+
+    Each image is displayed for the sum of its scene's chunk durations so that
+    the video length matches the stitched audio exactly.
 
     Args:
         scenes: Scene results from image_generation step (each has image_blob_id).
         mp3_bytes: Final MP3 audio bytes.
         workflow_id: Workflow UUID for blob storage.
         session_maker: SQLAlchemy async session factory.
+        chunk_durations: Mapping of chunk_index → duration in seconds.
 
     Returns:
         UUID of the saved video blob.
@@ -276,7 +284,8 @@ async def _create_video(
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir_path = Path(tmpdir)
 
-        # Fetch and write image files
+        # Fetch and write image files; compute per-scene durations
+        scene_durations: list[float] = []
         async with session_maker() as session:
             for i, scene in enumerate(scenes):
                 blob_id_str = scene.image_blob_id
@@ -286,23 +295,40 @@ async def _create_video(
                 img_path = tmpdir_path / f"image_{i:03d}.png"
                 img_path.write_bytes(blob.data)
 
+                dur = sum(
+                    chunk_durations.get(idx, 0.0) for idx in scene.chunk_indices
+                )
+                scene_durations.append(dur if dur > 0 else 5.0)
+
         # Write audio file
         mp3_path = tmpdir_path / "audio.mp3"
         mp3_path.write_bytes(mp3_bytes)
 
-        # Create video with ffmpeg
-        # Use 5 seconds per image, scale to 1280x720, match audio length
+        # Build ffmpeg concat file so each image holds for its scene's duration
+        concat_path = tmpdir_path / "concat.txt"
+        lines: list[str] = ["ffconcat version 1.0"]
+        for i, dur in enumerate(scene_durations):
+            img_name = f"image_{i:03d}.png"
+            lines.append(f"file '{img_name}'")
+            lines.append(f"duration {dur:.6f}")
+        # ffconcat requires repeating last entry without duration to avoid 1-frame overshoot
+        if scene_durations:
+            last_name = f"image_{len(scene_durations) - 1:03d}.png"
+            lines.append(f"file '{last_name}'")
+        concat_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+        # Create video with ffmpeg using concat demuxer (exact per-image durations)
         video_path = tmpdir_path / "final_video.mp4"
 
         cmd = [
             "ffmpeg",
             "-y",
-            "-framerate",
-            _FRAMERATE,
-            "-pattern_type",
-            "glob",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
             "-i",
-            str(tmpdir_path / "image_*.png"),
+            str(concat_path),
             "-i",
             str(mp3_path),
             "-c:v",
