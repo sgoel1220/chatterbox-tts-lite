@@ -17,6 +17,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.models.enums import GpuProvider as GpuProviderName, GpuPodStatus
 
 
+class ImagePullStuckError(RuntimeError):
+    """Raised when a pod's image pull has been stuck for too long."""
+
+
 class GpuPodSpec(BaseModel):
     """Spec for creating a GPU pod. Defaults loaded from config."""
 
