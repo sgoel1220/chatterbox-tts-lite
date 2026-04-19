@@ -10,8 +10,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
 
 from sqlalchemy import select
 
-from .retry_resume_controller import SetWorkflowStatus
-from .task_supervisor import CancelTaskCallback
+from .task_supervisor import CancelTaskCallback, SetWorkflowStatus
 
 log = logging.getLogger(__name__)
 

@@ -6,12 +6,18 @@ import asyncio
 import logging
 import uuid
 from collections.abc import Awaitable, Callable, Coroutine
-from typing import Any, Protocol
+from importlib import import_module
+from typing import TYPE_CHECKING, Any, Protocol, TypeAlias
 
 from pydantic import BaseModel
 
 from .models import PauseAfterStep, StepOutputMap, WorkflowDef
 from .registry import WorkflowDefinitionRegistry
+
+if TYPE_CHECKING:
+    WorkflowStatus: TypeAlias = Any
+else:
+    WorkflowStatus = getattr(import_module("app.models.enums"), "WorkflowStatus")
 
 log = logging.getLogger(__name__)
 
@@ -35,7 +41,7 @@ RunnerFactory = Callable[
 ]
 CreateTask = Callable[[Coroutine[Any, Any, None], str], asyncio.Task[None]]
 PauseWorkflow = Callable[[str], Awaitable[None]]
-MarkWorkflowCancelled = Callable[[uuid.UUID], Awaitable[None]]
+SetWorkflowStatus = Callable[[uuid.UUID, Any], Awaitable[None]]
 
 
 class CancelTaskCallback(Protocol):
@@ -126,7 +132,7 @@ class WorkflowTaskSupervisor:
         run_id: str,
         *,
         mark_cancelled_in_db: bool,
-        mark_workflow_cancelled: MarkWorkflowCancelled,
+        set_workflow_status: SetWorkflowStatus,
     ) -> None:
         """Cancel a tracked task and optionally mark its workflow CANCELLED."""
         task = self.tasks.pop(run_id, None)
@@ -140,6 +146,6 @@ class WorkflowTaskSupervisor:
         if mark_cancelled_in_db:
             try:
                 wf_id = uuid.UUID(run_id)
-                await mark_workflow_cancelled(wf_id)
+                await set_workflow_status(wf_id, WorkflowStatus.CANCELLED)
             except (ValueError, Exception) as exc:
                 log.error("engine: failed to mark workflow %s cancelled: %s", run_id, exc)
