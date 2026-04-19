@@ -176,7 +176,7 @@ class RunPodProvider(GpuProvider):
         pull_stuck_timeout_sec: int = 480,
     ) -> GpuPod:
         """Create a new GPU pod using the RunPod SDK."""
-        from .base import ImagePullStuckError
+        from .base import ImagePullStuckError, NoInstancesAvailableError
 
         service_port = spec.ports[0] if spec.ports else 8005
 
@@ -236,6 +236,10 @@ class RunPodProvider(GpuProvider):
 
         try:
             raw = _as_raw_pod(await asyncio.to_thread(_create))
+            if raw is None or not raw.get("id"):
+                raise NoInstancesAvailableError(
+                    f"No instances available for GPU type: {spec.gpu_type}"
+                )
             pod_id = str(raw["id"])
             # create_pod returns sparse data; fetch full pod info
             full_pod = await self.get_pod(pod_id, service_port)
@@ -243,7 +247,14 @@ class RunPodProvider(GpuProvider):
                 return full_pod
             # Fallback to parsing sparse response if get_pod fails
             return self._parse_pod(raw, service_port)
-        except Exception:
+        except NoInstancesAvailableError:
+            raise
+        except Exception as exc:
+            err_msg = str(exc).lower()
+            if "no longer any instances available" in err_msg or "no instances available" in err_msg:
+                raise NoInstancesAvailableError(
+                    f"No instances available for GPU type: {spec.gpu_type}"
+                ) from exc
             # On error, check if pod was created by concurrent call
             recovered = await self._find_pod_by_name(idempotency_key, service_port)
             if recovered and recovered.status not in (GpuPodStatus.TERMINATED, GpuPodStatus.STOPPED):

@@ -26,24 +26,56 @@ async def create_recorded_pod(
     idempotency_key: str,
     workflow_id: uuid.UUID | None,
     label: str,
+    gpu_type_fallbacks: list[str] | None = None,
 ) -> GpuPod:
-    """Create a GPU pod and persist its cost-tracking record."""
-    pod = await provider.create_pod(
-        spec=spec,
-        idempotency_key=idempotency_key,
-    )
-    log.info("%s pod created pod_id=%s provider=%s", label, pod.id, pod.provider)
+    """Create a GPU pod and persist its cost-tracking record.
 
-    async with session_maker() as session:
-        await CostService(session).record_pod(
-            pod_id=pod.id,
-            provider=GpuProviderEnum(pod.provider),
-            workflow_id=workflow_id,
-            gpu_type=pod.gpu_type,
-            cost_per_hour_cents=pod.cost_per_hour_cents,
+    If ``gpu_type_fallbacks`` is provided, retries with each fallback GPU type
+    in order when the primary type has no available instances.
+    """
+    from app.gpu.base import NoInstancesAvailableError
+
+    candidates = [spec.gpu_type] + (gpu_type_fallbacks or [])
+    last_exc: NoInstancesAvailableError | None = None
+
+    for gpu_type in candidates:
+        attempt_spec = spec.model_copy(update={"gpu_type": gpu_type})
+        try:
+            pod = await provider.create_pod(
+                spec=attempt_spec,
+                idempotency_key=idempotency_key,
+            )
+        except NoInstancesAvailableError as exc:
+            log.warning(
+                "%s no instances available for gpu_type=%s; trying next fallback",
+                label,
+                gpu_type,
+            )
+            last_exc = exc
+            continue
+
+        log.info(
+            "%s pod created pod_id=%s provider=%s gpu_type=%s",
+            label,
+            pod.id,
+            pod.provider,
+            gpu_type,
         )
 
-    return pod
+        async with session_maker() as session:
+            await CostService(session).record_pod(
+                pod_id=pod.id,
+                provider=GpuProviderEnum(pod.provider),
+                workflow_id=workflow_id,
+                gpu_type=pod.gpu_type,
+                cost_per_hour_cents=pod.cost_per_hour_cents,
+            )
+
+        return pod
+
+    raise last_exc or NoInstancesAvailableError(
+        f"No instances available for any GPU type: {candidates}"
+    )
 
 
 async def wait_for_recorded_ready(

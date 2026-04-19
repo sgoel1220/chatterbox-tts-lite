@@ -266,6 +266,7 @@ async def execute(
         idempotency_key=f"img-{workflow_run_id}",
         workflow_id=workflow_id_uuid,
         label="image",
+        gpu_type_fallbacks=settings.gpu_type_fallbacks,
     )
 
     # --- 7. Wait for pod ready, then generate images ---

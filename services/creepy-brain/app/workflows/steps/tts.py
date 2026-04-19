@@ -240,6 +240,7 @@ async def execute(input: WorkflowInputSchema, ctx: StepContext) -> TtsStepOutput
         idempotency_key=f"tts-{workflow_run_id}",
         workflow_id=workflow_id_for_pod,
         label="tts",
+        gpu_type_fallbacks=settings.gpu_type_fallbacks,
     )
 
     # --- 7. Wait for pod ready, then synthesize pending chunks ---
