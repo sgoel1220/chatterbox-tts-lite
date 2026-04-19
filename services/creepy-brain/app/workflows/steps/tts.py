@@ -126,16 +126,11 @@ async def execute(input: WorkflowInputSchema, ctx: StepContext) -> TtsStepOutput
         Pydantic output model with pod_id, chunk_count, total_duration_sec, and chunks.
     """
     # --- 1. Get story_id from parent step output, then fetch full_text from DB ---
-    story_output = ctx.parent_outputs.get("generate_story")
-    if story_output is None:
+    story_result = ctx.get_parent_output("generate_story", GenerateStoryStepOutput)
+    if story_result is None:
         raise ValueError("generate_story step did not produce story_id")
 
-    # Parent output may be a plain dict (JSON path, story_id
-    # is a str) or preserve the native Python type (story_id is uuid.UUID).
-    # Accept both to guard against the internal _data.parents shape changing.
-    story_id_for_text: uuid.UUID = (
-        story_id_raw if isinstance(story_id_raw, uuid.UUID) else uuid.UUID(str(story_id_raw))
-    )
+    story_id_for_text: uuid.UUID = story_result.story_id
     story_id_str: str = str(story_id_for_text)
 
     _session_maker = get_session_maker()
