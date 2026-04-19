@@ -12,9 +12,11 @@ import {
   cancelWorkflow,
   pauseWorkflow,
   resumeWorkflow,
+  forkWorkflow,
   type WorkflowDetailResponse,
   type WorkflowLogEntry,
   type StoryDetailResponse,
+  type StepName,
 } from "../api.js";
 import {
   shortId, timeAgo, duration, statusClass, formatStep, formatCost, esc,
@@ -205,6 +207,21 @@ function attachActionListeners(wf: WorkflowDetailResponse): void {
       "Encoding WAV→MP3…",
     );
   });
+
+  document.querySelectorAll<HTMLButtonElement>(".step-fork-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const stepName = btn.dataset.stepName as StepName;
+      if (!stepName) return;
+      if (!confirm(`Fork from step "${formatStep(stepName)}"?\n\nA new workflow will copy all prior data and re-run from this step onward.`)) return;
+      runAction(
+        () => forkWorkflow(wf.id, stepName).then((r) => {
+          location.hash = `#/workflow/${r.workflow_id}`;
+        }),
+        false,
+        `Forking from ${formatStep(stepName)}…`,
+      );
+    });
+  });
 }
 
 function attachChunkListeners(): void {
@@ -373,22 +390,33 @@ function renderDetail(wf: WorkflowDetailResponse): string {
 
   // Steps
   if (wf.steps.length > 0) {
-    const rows = wf.steps.map((s) => {
+    // Show only the latest attempt per step_name.
+    const latestByStep = new Map<string, typeof wf.steps[0]>();
+    for (const s of wf.steps) {
+      const prev = latestByStep.get(s.step_name);
+      if (!prev || s.attempt_number > prev.attempt_number) latestByStep.set(s.step_name, s);
+    }
+    const canFork = TERMINAL_STATUSES.has(wf.status);
+    const rows = [...latestByStep.values()].map((s) => {
       const sc = statusClass(s.status);
       const t = s.started_at ? duration(s.started_at, s.completed_at) : "-";
+      const forkBtn = canFork && s.status === "completed" && s.step_name !== "cleanup_gpu_pod"
+        ? `<button class="btn btn-sm step-fork-btn" data-step-name="${s.step_name}" title="Fork from this step">Fork ↪</button>`
+        : "";
       return `<tr>
         <td>${formatStep(s.step_name)}</td>
         <td><span class="badge ${sc}">${s.status}</span></td>
         <td>${s.attempt_number}</td>
         <td>${t}</td>
         <td class="text-err">${s.error ? esc(s.error.slice(0, 60)) : ""}</td>
+        <td>${forkBtn}</td>
       </tr>`;
     }).join("");
     parts.push(`
       <div class="section">
         <h3>Steps</h3>
         <table>
-          <thead><tr><th>Step</th><th>Status</th><th>Attempt</th><th>Time</th><th>Error</th></tr></thead>
+          <thead><tr><th>Step</th><th>Status</th><th>Attempt</th><th>Time</th><th>Error</th><th></th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
       </div>

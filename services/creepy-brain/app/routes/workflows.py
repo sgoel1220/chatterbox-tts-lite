@@ -30,7 +30,7 @@ from app.schemas.workflow import (
     WorkflowStepResponse,
 )
 from app.services.http_errors import require_found
-from app.services.workflow_service import WorkflowService
+from app.services.workflow_service import WorkflowService, fork_workflow
 
 router = APIRouter(prefix="/api/workflows", tags=["workflows"])
 log = structlog.get_logger()
@@ -521,3 +521,58 @@ async def resume_workflow(workflow_id: uuid.UUID, db: DbSession) -> WorkflowResp
 
     await db.refresh(workflow)
     return _to_response(workflow)
+
+
+# ── Fork ──────────────────────────────────────────────────────────────────────
+
+class ForkRequest(BaseModel):
+    """Request body for forking a workflow from a specific step."""
+
+    from_step: StepName
+
+
+class ForkResponse(BaseModel):
+    """Response body for fork endpoint."""
+
+    workflow_id: str
+
+
+@router.post("/{workflow_id}/fork", response_model=ForkResponse, status_code=201)
+async def fork_workflow_endpoint(
+    workflow_id: uuid.UUID,
+    body: ForkRequest,
+    db: DbSession,
+) -> ForkResponse:
+    """Fork a workflow: copy prior step data and re-run from *from_step* onward.
+
+    Creates a new workflow that inherits all DB data (story, chunks, scenes) from
+    the source workflow up to but not including *from_step*, then triggers fresh
+    execution from that step.  The source workflow is left untouched.
+
+    Allowed on any workflow status (useful to re-stitch a completed workflow with
+    different parameters, or to re-generate images from an already-stitched run).
+    """
+    await _get_workflow_or_404(workflow_id, db)
+
+    try:
+        new_wf = await fork_workflow(db, workflow_id, body.from_step)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    await db.commit()
+
+    try:
+        await engine.trigger("ContentPipeline", new_wf.input_json, new_wf.id)
+    except Exception:
+        new_wf.status = WorkflowStatus.FAILED
+        await db.commit()
+        log.exception("fork: engine.trigger failed", workflow_id=str(new_wf.id))
+        raise
+
+    log.info(
+        "fork: created workflow_id=%s from source=%s from_step=%s",
+        new_wf.id,
+        workflow_id,
+        body.from_step.value,
+    )
+    return ForkResponse(workflow_id=str(new_wf.id))

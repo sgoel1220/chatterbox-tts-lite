@@ -245,3 +245,15 @@ export interface WorkflowLogEntry {
 export function fetchWorkflowLogs(id: string): Promise<WorkflowLogEntry[]> {
   return api(`/api/workflows/${id}/logs`);
 }
+
+export interface ForkResponse {
+  workflow_id: string;
+}
+
+export function forkWorkflow(id: string, fromStep: StepName): Promise<ForkResponse> {
+  return api(`/api/workflows/${id}/fork`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ from_step: fromStep }),
+  });
+}
