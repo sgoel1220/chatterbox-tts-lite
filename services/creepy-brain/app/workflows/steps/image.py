@@ -247,12 +247,17 @@ async def execute(input: WorkflowInputSchema, ctx: StepContext) -> dict[str, obj
     )
 
     # --- 5. Generate prompts and save to DB (BEFORE GPU spin-up) ---
-    scene_prompts = await _generate_and_save_prompts(
-        scenes=pending_scenes,
-        workflow_id=workflow_id_uuid,
-        existing_scene_map=existing_scene_map,
-        session_maker=session_maker,
-    )
+    from app.llm.client import set_llm_workflow_context
+    set_llm_workflow_context(workflow_id_uuid)
+    try:
+        scene_prompts = await _generate_and_save_prompts(
+            scenes=pending_scenes,
+            workflow_id=workflow_id_uuid,
+            existing_scene_map=existing_scene_map,
+            session_maker=session_maker,
+        )
+    finally:
+        set_llm_workflow_context(None)
     log.info("image_generation: %d prompts generated and saved", len(scene_prompts))
 
     # --- 6. Spin up image GPU pod ---

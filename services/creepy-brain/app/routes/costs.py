@@ -29,13 +29,7 @@ async def get_cost_summary() -> CostSummary:
 
 @router.get("/workflow/{workflow_id}")
 async def get_workflow_cost(workflow_id: uuid.UUID) -> WorkflowCost:
-    """Get total cost for a specific workflow."""
+    """Get total cost (GPU + LLM) for a specific workflow."""
     session_maker = _get_session_maker()
     async with session_maker() as session:
-        svc = CostService(session)
-        total = await svc.get_workflow_cost(workflow_id)
-    return WorkflowCost(
-        workflow_id=str(workflow_id),
-        total_cost_cents=total,
-        pod_count=0,  # TODO: add pod count query if needed
-    )
+        return await CostService(session).get_workflow_cost(workflow_id)

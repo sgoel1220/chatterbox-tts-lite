@@ -4,6 +4,7 @@ import {
   fetchWorkflowDetail,
   fetchStoryByWorkflow,
   fetchWorkflowLogs,
+  fetchWorkflowCost,
   updateStory,
   retryWorkflow,
   retryTtsStep,
@@ -15,6 +16,7 @@ import {
   forkWorkflow,
   type WorkflowDetailResponse,
   type WorkflowLogEntry,
+  type WorkflowCost,
   type StoryDetailResponse,
   type StepName,
 } from "../api.js";
@@ -37,6 +39,9 @@ let storySaving = false;
 let logEntries: WorkflowLogEntry[] = [];
 let logsExpanded = false;
 
+// Cost state
+let workflowCost: WorkflowCost | null = null;
+
 export function mount(container: HTMLElement, id: string): void {
   workflowId = id;
   storyData = null;
@@ -44,6 +49,7 @@ export function mount(container: HTMLElement, id: string): void {
   storySaving = false;
   logEntries = [];
   logsExpanded = false;
+  workflowCost = null;
   container.innerHTML = `
     <div class="toolbar">
       <a href="#/workflows" class="back-link">&larr; Workflows</a>
@@ -74,11 +80,13 @@ async function refresh(): Promise<void> {
   const el = document.getElementById("wd-content");
   if (!el) return;
   try {
-    const [wf, logs] = await Promise.all([
+    const [wf, logs, cost] = await Promise.all([
       fetchWorkflowDetail(workflowId),
       fetchWorkflowLogs(workflowId).catch(() => logEntries),
+      fetchWorkflowCost(workflowId).catch(() => null),
     ]);
     logEntries = logs;
+    workflowCost = cost;
 
     // Stop polling once workflow reaches a terminal state
     if (TERMINAL_STATUSES.has(wf.status) && pollTimer) {
@@ -367,6 +375,9 @@ function renderDetail(wf: WorkflowDetailResponse): string {
         ${wf.started_at ? `<span>Duration</span><span>${duration(wf.started_at, wf.completed_at)}</span>` : ""}
         ${wf.current_step ? `<span>Current Step</span><span>${formatStep(wf.current_step)}</span>` : ""}
         ${wf.error ? `<span>Error</span><span class="text-err">${esc(wf.error)}</span>` : ""}
+        ${workflowCost ? `
+        <span>Cost</span>
+        <span title="GPU: ${formatCost(workflowCost.gpu_cost_cents)} · LLM: ${formatCost(workflowCost.llm_cost_cents)}">${formatCost(workflowCost.total_cost_cents)}</span>` : ""}
       </div>
     </div>
   `);
