@@ -35,11 +35,7 @@ from app.engine import SkippedStepOutput, StepContext
 
 from app.config import settings
 from app.gpu import GpuPodSpec, get_provider
-from app.gpu.lifecycle import (
-    create_recorded_pod,
-    terminate_and_finalize,
-    wait_for_recorded_ready,
-)
+from app.gpu.lifecycle import gpu_pod
 from app.llm.image_prompts import generate_scene_image_prompt
 from app.models.enums import BlobType, ChunkStatus
 from app.models.json_schemas import WorkflowInputSchema
@@ -262,9 +258,9 @@ async def execute(
         set_llm_workflow_context(None)
     log.info("image_generation: %d prompts generated and saved", len(scene_prompts))
 
-    # --- 6. Spin up image GPU pod ---
+    # --- 6-8. Spin up image GPU pod, wait for ready, generate, terminate ---
     provider = get_provider(settings.runpod_api_key)
-    pod = await create_recorded_pod(
+    async with gpu_pod(
         provider,
         session_maker,
         spec=_image_pod_spec(),
@@ -272,31 +268,15 @@ async def execute(
         workflow_id=workflow_id_uuid,
         label="image",
         gpu_type_fallbacks=settings.gpu_type_fallbacks,
-    )
-
-    # --- 7. Wait for pod ready, then generate images ---
-    try:
-        pod, endpoint_url = await wait_for_recorded_ready(
-            provider,
-            session_maker,
-            pod.id,
-            timeout_sec=settings.pod_ready_timeout_sec,
-            label="image",
-            service_port=settings.image_server_port,
-        )
-
+        timeout_sec=settings.pod_ready_timeout_sec,
+        service_port=settings.image_server_port,
+    ) as (pod, endpoint_url):
         new_results = await _generate_images_from_prompts(
             endpoint_url=endpoint_url,
             scene_prompts=scene_prompts,
             workflow_id=workflow_id_uuid,
             session_maker=session_maker,
         )
-    finally:
-        # --- 8. Terminate image pod ---
-        try:
-            await terminate_and_finalize(provider, pod.id, session_maker)
-        except Exception as term_exc:
-            log.error("failed to terminate image pod %s: %s", pod.id, term_exc)
 
     scene_results = sorted(resumed_results + new_results, key=lambda r: r.scene_index)
     output = ImageStepOutput(
