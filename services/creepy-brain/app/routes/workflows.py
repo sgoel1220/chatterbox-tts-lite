@@ -378,11 +378,7 @@ async def resume_workflow(workflow_id: uuid.UUID, db: DbSession) -> WorkflowResp
             ),
         )
 
-    try:
-        await WorkflowLifecycleService(db).resume_workflow(workflow_id, engine)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
+    await WorkflowLifecycleService(db).resume_workflow(workflow_id, engine)
     await db.refresh(workflow)
     return _to_response(workflow)
 
@@ -418,9 +414,6 @@ async def fork_workflow_endpoint(
     """
     await _get_workflow_or_404(workflow_id, db)
 
-    try:
-        new_wf = await fork_and_trigger(db, workflow_id, body.from_step, engine)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    new_wf = await fork_and_trigger(db, workflow_id, body.from_step, engine)
 
     return ForkResponse(workflow_id=str(new_wf.id))

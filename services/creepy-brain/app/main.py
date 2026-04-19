@@ -77,12 +77,18 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
+    # Add request context middleware
+    app.add_middleware(RequestContextMiddleware)
+
+    # Centralised exception → HTTP status mapping.
+    # Routes must NOT catch these themselves — just let them propagate.
     @app.exception_handler(ResourceNotFoundError)
     async def _not_found_handler(request: Request, exc: ResourceNotFoundError) -> JSONResponse:
         return JSONResponse(status_code=404, content={"detail": str(exc)})
 
-    # Add request context middleware
-    app.add_middleware(RequestContextMiddleware)
+    @app.exception_handler(ValueError)
+    async def _value_error_handler(request: Request, exc: ValueError) -> JSONResponse:
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     # Auto-instrument HTTP metrics and expose /metrics endpoint
     Instrumentator().instrument(app).expose(app, endpoint="/metrics")
