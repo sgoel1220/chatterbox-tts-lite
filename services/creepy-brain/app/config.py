@@ -44,6 +44,7 @@ class Settings(BaseSettings):
 
     # GPU pod configuration
     gpu_type: str = "NVIDIA RTX A4000"
+    gpu_type_fallbacks: list[str] = Field(default_factory=lambda: ["NVIDIA RTX 3080 Ti"])
     gpu_cloud_type: str = "COMMUNITY"  # COMMUNITY or SECURE
     gpu_image: str = "ghcr.io/sgoel1220/tts-server:main"
     gpu_container_disk_gb: int = 25

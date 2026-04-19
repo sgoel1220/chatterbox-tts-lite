@@ -19,6 +19,10 @@ class ImagePullStuckError(RuntimeError):
     """Raised when a pod's image pull has been stuck for too long."""
 
 
+class NoInstancesAvailableError(RuntimeError):
+    """Raised when no GPU instances of the requested type are available."""
+
+
 class GpuPodSpec(BaseModel):
     """Spec for creating a GPU pod. Defaults loaded from config."""
 
