@@ -53,7 +53,6 @@ from app.models.json_schemas import GenerateStoryStepOutput, WorkflowInputSchema
 from app.services import blob_service
 from app.services import story_service as _story_service
 from app.services.workflow_service import (
-    ChunkForImageStep,
     WorkflowService,
     get_chunks_for_image_step,
     get_optional_workflow_id,
@@ -186,29 +185,22 @@ async def execute(input: WorkflowInputSchema, ctx: StepContext) -> TtsStepOutput
             await session.commit()
         log.info("tts_synthesis: persisted %d chunks to DB", len(chunks))
 
-    # --- 4. Check for already-completed chunks (sub-unit resume) ---
+    # --- 4. Read DB chunks back and split by status (DB is the source of truth) ---
+    # pending_chunks uses DB text so what is synthesized == what is stored.
     resumed_results: list[TtsChunkResult] = []
     pending_chunks: list[tuple[int, str]] = []
     resumed_duration: float = 0.0
 
     if workflow_id_uuid is not None:
         async with session_maker() as session:
-            existing = await get_chunks_for_image_step(session, workflow_id_uuid)
+            db_chunks = await get_chunks_for_image_step(session, workflow_id_uuid)
 
-        existing_by_index: dict[int, ChunkForImageStep] = {c.index: c for c in existing}
-
-        for idx, chunk_text in enumerate(chunks):
-            db_chunk = existing_by_index.get(idx)
-            if (
-                db_chunk is not None
-                and db_chunk.tts_status == ChunkStatus.COMPLETED
-                and db_chunk.blob_id
-            ):
-                # Already completed — reuse result
+        for db_chunk in db_chunks:
+            if db_chunk.tts_status == ChunkStatus.COMPLETED and db_chunk.blob_id:
                 dur = db_chunk.duration_sec or 0.0
                 resumed_results.append(TtsChunkResult(
-                    index=idx,
-                    text=chunk_text,
+                    index=db_chunk.index,
+                    text=db_chunk.text,
                     blob_id=db_chunk.blob_id,
                     duration_sec=dur,
                     attempts_used=1,
@@ -216,7 +208,7 @@ async def execute(input: WorkflowInputSchema, ctx: StepContext) -> TtsStepOutput
                 ))
                 resumed_duration += dur
             else:
-                pending_chunks.append((idx, chunk_text))
+                pending_chunks.append((db_chunk.index, db_chunk.text))
     else:
         pending_chunks = list(enumerate(chunks))
 

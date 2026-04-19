@@ -36,7 +36,13 @@ class WorkflowService:
         chunk_index: int,
         chunk_text: str,
     ) -> WorkflowChunk:
-        """Create or retrieve the WorkflowChunk for *chunk_index* (flush only)."""
+        """Create or update the WorkflowChunk for *chunk_index* (flush only).
+
+        If the row already exists but ``chunk_text`` has changed (e.g. after
+        re-normalization), the text is updated and the status is reset to
+        PENDING so the chunk is re-synthesized, ensuring DB text always matches
+        the audio that was actually generated.
+        """
         result = await self._session.execute(
             select(WorkflowChunk).where(
                 WorkflowChunk.workflow_id == workflow_id,
@@ -54,6 +60,12 @@ class WorkflowService:
             self._session.add(chunk)
             await self._session.flush()
             await self._session.refresh(chunk)
+        elif chunk.chunk_text != chunk_text:
+            chunk.chunk_text = chunk_text
+            chunk.tts_status = ChunkStatus.PENDING
+            chunk.tts_audio_blob_id = None
+            chunk.tts_duration_sec = None
+            await self._session.flush()
         return chunk
 
     async def mark_chunk_processing(
