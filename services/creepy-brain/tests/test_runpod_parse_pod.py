@@ -69,23 +69,23 @@ class TestParsePodEndpoint:
         # First public port in iteration order
         assert pod.endpoint_url == "http://1.2.3.4:10022"
 
-    def test_no_public_port_returns_none_endpoint(self) -> None:
+    def test_no_public_port_falls_back_to_proxy(self) -> None:
         private_only = [
             {"ip": "10.0.0.1", "privatePort": 8005, "publicPort": 8005, "isIpPublic": False, "type": "http"},
         ]
         pod = _provider()._parse_pod(_base_raw(ports=private_only), service_port=8005)
-        assert pod.endpoint_url is None
+        assert pod.endpoint_url == "https://pod-123-8005.proxy.runpod.net"
 
-    def test_no_matching_service_port_returns_none(self) -> None:
+    def test_no_matching_service_port_falls_back_to_proxy(self) -> None:
         ports = [
             {"ip": "1.2.3.4", "privatePort": 9000, "publicPort": 20001, "isIpPublic": True, "type": "http"},
         ]
         pod = _provider()._parse_pod(_base_raw(ports=ports), service_port=8005)
-        assert pod.endpoint_url is None
+        assert pod.endpoint_url == "https://pod-123-8005.proxy.runpod.net"
 
-    def test_empty_ports_returns_none_endpoint(self) -> None:
+    def test_empty_ports_falls_back_to_proxy(self) -> None:
         pod = _provider()._parse_pod(_base_raw(ports=[]), service_port=8005)
-        assert pod.endpoint_url is None
+        assert pod.endpoint_url == "https://pod-123-8005.proxy.runpod.net"
 
 
 class TestParsePodCreatedAt:
