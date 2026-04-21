@@ -585,12 +585,27 @@ function renderDetail(wf: WorkflowDetailResponse): string {
       const videoUrl = `/api/blobs/${r.final_video_blob_id}`;
       outputParts.push(`
         <div class="output-block">
-          <h4>Video</h4>
+          <h4>Video (Clean)</h4>
           <video controls preload="metadata" style="width:100%">
             <source src="${videoUrl}" type="video/mp4">
           </video>
           <div class="output-meta">
             <a href="${videoUrl}" download="video.mp4" class="btn btn-sm">Download MP4</a>
+          </div>
+        </div>
+      `);
+    }
+
+    if (r.waveform_video_blob_id) {
+      const waveformUrl = `/api/blobs/${r.waveform_video_blob_id}`;
+      outputParts.push(`
+        <div class="output-block">
+          <h4>Video (Waveform Overlay)</h4>
+          <video controls preload="metadata" style="width:100%">
+            <source src="${waveformUrl}" type="video/mp4">
+          </video>
+          <div class="output-meta">
+            <a href="${waveformUrl}" download="video-waveform.mp4" class="btn btn-sm">Download MP4</a>
           </div>
         </div>
       `);
