@@ -46,6 +46,7 @@ export interface WorkflowResult {
   run_id: string | null;
   final_audio_blob_id: string | null;
   final_video_blob_id: string | null;
+  waveform_video_blob_id: string | null;
   total_duration_sec: number | null;
   chunk_count: number | null;
   gpu_pod_id: string | null;
