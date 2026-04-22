@@ -1,7 +1,11 @@
 """waveform_overlay step executor.
 
-Burns an animated 140px player bar (waveform + progress + album art + title)
-into a second video. Stored as WAVEFORM_VIDEO blob alongside the clean video.
+Generates a standalone animated waveform visualization video.
+
+Dark navy background, full-width symmetric bars above/below a center
+baseline. A cross/diamond burst at the playhead pulses per word based on
+per-frame audio amplitude. Quiet bars render as tiny nubs (dotted rope).
+Staircase quantization gives a pixelated/quantized aesthetic.
 """
 
 from __future__ import annotations
@@ -16,187 +20,40 @@ from typing import Any
 
 import numpy as np
 import structlog
-from PIL import Image, ImageDraw, ImageFont
-from pydantic import BaseModel, Field
+from PIL import Image
 from sqlalchemy import select
 
 from app.engine import SkippedStepOutput, StepContext
-from app.models.enums import BlobType, ChunkStatus
+from app.models.enums import BlobType
 from app.models.json_schemas import WaveformOverlayStepOutput, WorkflowInputSchema
-from app.models.workflow import WorkflowBlob, WorkflowScene
+from app.models.workflow import WorkflowBlob
 from app.services import blob_service
-from app.services.workflow_service import (
-    get_optional_workflow_id,
-    get_scenes_for_workflow,
-)
+from app.services.workflow_service import get_optional_workflow_id
 from app.workflows.db_helpers import get_session_maker
 from app.workflows.steps.stitch import StitchStepOutput
 
 log = structlog.get_logger(__name__)
 
-# Visual constants
-_BAR_H = 140          # overlay bar height in pixels
-_VIDEO_W = 1280       # expected video width
-_ART_SIZE = 90        # album art thumbnail size
-_ART_X = 16          # album art left margin
-_ART_Y = 25          # album art top margin
-_N_BARS = 120         # number of waveform bars displayed at once
-_FINE_STEPS = 2000    # high-resolution envelope for scrolling
-_BAR_COLOR_PLAYED = (230, 60, 100)       # pink
-_BAR_COLOR_FUTURE = (100, 110, 140)      # gray-blue
-_PROGRESS_COLOR = (230, 60, 100)         # pink
-_BG_COLOR = (15, 20, 40, 200)           # dark navy ~78% opacity
-_TITLE_COLOR = (255, 255, 255)           # white
-_SUBTITLE_COLOR = (160, 165, 185)        # gray
-
-
-def _rounded_thumbnail(data: bytes, size: int) -> Image.Image:
-    """Decode image bytes, scale to size×size with rounded corners."""
-    img = Image.open(io.BytesIO(data)).convert("RGBA")
-    img = img.resize((size, size), Image.LANCZOS)
-
-    # Rounded corner mask
-    mask = Image.new("L", (size, size), 0)
-    draw = ImageDraw.Draw(mask)
-    radius = 10
-    draw.rounded_rectangle([0, 0, size - 1, size - 1], radius=radius, fill=255)
-    img.putalpha(mask)
-    return img
-
-
-def _load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    """Load a TTF font, falling back to PIL default if unavailable."""
-    candidates = (
-        [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-        ]
-        if bold
-        else [
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-        ]
-    )
-    for path in candidates:
-        try:
-            return ImageFont.truetype(path, size)
-        except OSError:
-            continue
-    return ImageFont.load_default()
-
-
-def _build_static_frame(
-    art_img: Image.Image | None,
-    title: str,
-    subtitle: str,
-) -> Image.Image:
-    """Build the static part of the overlay frame (1280×140 RGBA).
-
-    Returns a PIL Image with the background, art, text, and controls.
-    Waveform bars are drawn dynamically per-frame in _render_frame.
-    """
-    frame = Image.new("RGBA", (_VIDEO_W, _BAR_H), _BG_COLOR)
-    draw = ImageDraw.Draw(frame)
-
-    # --- Album art ---
-    art_x = _ART_X
-    art_y = _ART_Y
-    art_end_x = art_x + _ART_SIZE + 12  # right edge + margin
-
-    if art_img is not None:
-        frame.paste(art_img, (art_x, art_y), art_img)
-
-    # --- Text block ---
-    text_x = art_end_x
-    font_title = _load_font(18, bold=True)
-    font_sub = _load_font(13, bold=False)
-
-    draw.text((text_x, 28), title.upper(), font=font_title, fill=_TITLE_COLOR)
-    draw.text((text_x, 54), subtitle, font=font_sub, fill=_SUBTITLE_COLOR)
-
-    # --- Control icons ---
-    font_ctrl = _load_font(20, bold=False)
-    ctrl_x = _VIDEO_W - 90
-    ctrl_y = 28
-    draw.text((ctrl_x, ctrl_y), "⏮ ▶ ⏭", font=font_ctrl, fill=_TITLE_COLOR)
-
-    # --- Progress track line (bottom) ---
-    prog_y = _BAR_H - 8
-    draw.line([(0, prog_y), (_VIDEO_W, prog_y)], fill=_BAR_COLOR_FUTURE, width=2)
-
-    return frame
-
-
-def _render_frame(
-    static_arr: np.ndarray[Any, np.dtype[np.uint8]],
-    fine_envs: list[float],
-    progress: float,
-    waveform_x0: int,
-    waveform_x1: int,
-) -> np.ndarray[Any, np.dtype[np.uint8]]:
-    """Clone static array and draw scrolling waveform bars + progress indicator.
-
-    Shows _N_BARS bars centered at the current playback position. Left half of
-    bars (already played) are pink; right half (upcoming) are gray. As progress
-    advances the waveform scrolls, giving a dynamic live-waveform appearance.
-    """
-    frame = static_arr.copy()
-
-    bar_area_w = waveform_x1 - waveform_x0
-    bar_w = max(2, bar_area_w // (_N_BARS * 2))
-    bar_gap = bar_w
-    wave_y_center = 85
-    max_bar_h = 28
-
-    n_fine = len(fine_envs)
-    # Index in fine_envs corresponding to current playback position
-    current_fine = int(progress * (n_fine - 1))
-    half_bars = _N_BARS // 2
-
-    for i in range(_N_BARS):
-        fine_idx = current_fine + (i - half_bars)
-        if 0 <= fine_idx < n_fine:
-            env = fine_envs[fine_idx]
-        else:
-            env = 0.0  # silence for out-of-range positions
-
-        bx = waveform_x0 + i * (bar_w + bar_gap)
-        if bx + bar_w > waveform_x1:
-            break
-
-        bh = max(3, int(env * max_bar_h))
-        y0 = wave_y_center - bh
-        y1 = wave_y_center + bh
-        # Bars at or before center = played (pink); after center = upcoming (gray)
-        color = _BAR_COLOR_PLAYED if i <= half_bars else _BAR_COLOR_FUTURE
-        frame[y0:y1, bx : bx + bar_w] = (*color, 255)
-
-    # Progress bar fill
-    prog_y = _BAR_H - 8
-    fill_w = int(progress * _VIDEO_W)
-    frame[prog_y - 1 : prog_y + 1, :fill_w] = (*_PROGRESS_COLOR, 255)
-
-    # Scrubber dot
-    dot_x = max(6, min(_VIDEO_W - 6, fill_w))
-    dot_r = 5
-    for dy in range(-dot_r, dot_r + 1):
-        dx = int((dot_r**2 - dy**2) ** 0.5)
-        y_pos = prog_y + dy
-        if 0 <= y_pos < _BAR_H:
-            x0 = max(0, dot_x - dx)
-            x1 = min(_VIDEO_W, dot_x + dx)
-            frame[y_pos, x0:x1] = (*_PROGRESS_COLOR, 255)
-
-    return frame
+# --- Visual constants ---
+_BG_COLOR = (26, 32, 48)          # #1a2030  dark navy background
+_BAR_COLOR = (58, 74, 94)         # #3a4a5e  muted blue-grey bars
+_SHADOW_COLOR = (16, 22, 34)      # slightly darker drop shadow
+_BAR_W = 3                        # bar width in pixels
+_BAR_GAP = 1                      # gap between bars (stride = 4px)
+_QUIET_H_MIN = 2                  # minimum nub height during silence
+_QUIET_H_MAX = 14                 # max background waveform shape height
+_BURST_H_MAX = 60                 # peak burst half-height from center line
+_BURST_BARS = 24                  # bars on each side of playhead that taper
+_BURST_STEPS = 8                  # staircase quantization levels
+_SHADOW_OFFSET = 3                # drop shadow y offset in pixels
+_COARSE_STEPS = 400               # envelope resolution for background shape
+_SAMPLE_RATE = 22050              # audio decoding sample rate (Hz)
 
 
 async def _ffprobe_video(path: str) -> tuple[float, int, int]:
     """Return (fps, width, height) via ffprobe."""
     cmd = [
-        "ffprobe",
-        "-v", "error",
+        "ffprobe", "-v", "error",
         "-select_streams", "v:0",
         "-show_entries", "stream=width,height,r_frame_rate",
         "-of", "csv=p=0",
@@ -210,7 +67,6 @@ async def _ffprobe_video(path: str) -> tuple[float, int, int]:
     stdout, stderr = await proc.communicate()
     if proc.returncode != 0:
         raise RuntimeError(f"ffprobe failed: {stderr.decode()}")
-
     parts = stdout.decode().strip().split(",")
     width = int(parts[0])
     height = int(parts[1])
@@ -220,12 +76,12 @@ async def _ffprobe_video(path: str) -> tuple[float, int, int]:
 
 
 async def _decode_audio_f32(audio_path: str) -> np.ndarray[Any, np.dtype[np.float32]]:
-    """Decode audio to mono f32 PCM at 22050 Hz via ffmpeg pipe."""
+    """Decode audio to mono f32 PCM at _SAMPLE_RATE Hz via ffmpeg pipe."""
     cmd = [
         "ffmpeg", "-y",
         "-i", audio_path,
         "-f", "f32le",
-        "-ar", "22050",
+        "-ar", str(_SAMPLE_RATE),
         "-ac", "1",
         "pipe:1",
     ]
@@ -237,39 +93,122 @@ async def _decode_audio_f32(audio_path: str) -> np.ndarray[Any, np.dtype[np.floa
     stdout, _ = await proc.communicate()
     if proc.returncode != 0:
         raise RuntimeError("ffmpeg audio decode failed")
-
-    # raw f32le bytes → float32 array
     n_samples = len(stdout) // 4
-    samples = struct.unpack(f"<{n_samples}f", stdout[:n_samples * 4])
+    samples = struct.unpack(f"<{n_samples}f", stdout[: n_samples * 4])
     return np.array(samples, dtype=np.float32)
 
 
-def _compute_envelope(samples: np.ndarray[Any, np.dtype[np.float32]], n_bars: int) -> list[float]:
-    """Compute RMS envelope across n_bars segments, normalized to [0, 1]."""
-    seg_len = max(1, len(samples) // n_bars)
+def _compute_envelope(
+    samples: np.ndarray[Any, np.dtype[np.float32]], n_steps: int
+) -> list[float]:
+    """Compute RMS envelope across n_steps segments, normalized 0→1."""
+    seg_len = max(1, len(samples) // n_steps)
     envs: list[float] = []
-    for i in range(n_bars):
+    for i in range(n_steps):
         seg = samples[i * seg_len : (i + 1) * seg_len]
-        rms = float(np.sqrt(np.mean(seg ** 2))) if len(seg) > 0 else 0.0
+        rms = float(np.sqrt(np.mean(seg**2))) if len(seg) > 0 else 0.0
         envs.append(rms)
-
     max_val = max(envs) if any(envs) else 1.0
     if max_val < 1e-9:
         max_val = 1.0
     return [v / max_val for v in envs]
 
 
+def _compute_frame_amplitudes(
+    samples: np.ndarray[Any, np.dtype[np.float32]], fps: float
+) -> list[float]:
+    """Compute per-frame RMS amplitude normalized 0→1.
+
+    One value per video frame — gives per-word/syllable reactivity since
+    amplitude naturally rises during stressed syllables and drops in pauses.
+    """
+    samples_per_frame = max(1, int(_SAMPLE_RATE / fps))
+    total_frames = (len(samples) + samples_per_frame - 1) // samples_per_frame
+    amps: list[float] = []
+    for i in range(total_frames):
+        start = i * samples_per_frame
+        seg = samples[start : start + samples_per_frame]
+        rms = float(np.sqrt(np.mean(seg**2))) if len(seg) > 0 else 0.0
+        amps.append(rms)
+    max_val = max(amps) if any(amps) else 1.0
+    if max_val < 1e-9:
+        max_val = 1.0
+    return [v / max_val for v in amps]
+
+
+def _render_frame(
+    background: np.ndarray[Any, np.dtype[np.uint8]],
+    coarse_envs: list[float],
+    frame_amps: list[float],
+    frame_idx: int,
+    total_frames: int,
+    vid_w: int,
+    vid_h: int,
+) -> np.ndarray[Any, np.dtype[np.uint8]]:
+    """Render one waveform visualization frame.
+
+    Draws full-width symmetric bars centered vertically. Near the playhead,
+    applies a cross/diamond burst whose height scales with per-frame audio
+    amplitude. Staircase quantization gives a pixelated aesthetic.
+    """
+    frame: np.ndarray[Any, np.dtype[np.uint8]] = background.copy()
+    center_y = vid_h // 2
+    progress = frame_idx / max(1, total_frames - 1)
+    playhead_x = int(progress * vid_w)
+
+    amp_idx = min(frame_idx, len(frame_amps) - 1)
+    current_amp = frame_amps[amp_idx]
+
+    n_coarse = len(coarse_envs)
+    stride = _BAR_W + _BAR_GAP
+
+    x = 0
+    while x + _BAR_W <= vid_w:
+        # Background waveform height from coarse envelope
+        coarse_idx = min(n_coarse - 1, int((x / vid_w) * n_coarse))
+        bg_env = coarse_envs[coarse_idx]
+        bg_h = _QUIET_H_MIN + int(bg_env * (_QUIET_H_MAX - _QUIET_H_MIN))
+
+        # Cross/diamond burst near the playhead
+        dist_bars = abs(x - playhead_x) / stride
+        if dist_bars < _BURST_BARS:
+            # Staircase quantization: creates stepped/pixelated diamond shape
+            raw_scale = 1.0 - dist_bars / _BURST_BARS
+            scale = round(raw_scale * _BURST_STEPS) / _BURST_STEPS
+            burst_h = int(scale * _BURST_H_MAX * current_amp)
+            bar_h = max(bg_h, burst_h)
+        else:
+            bar_h = bg_h
+
+        # Drop shadow (drawn first, shifted down)
+        sy0 = max(0, center_y - bar_h + _SHADOW_OFFSET)
+        sy1 = min(vid_h, center_y + bar_h + _SHADOW_OFFSET)
+        if sy1 > sy0:
+            frame[sy0:sy1, x : x + _BAR_W] = _SHADOW_COLOR
+
+        # Bar (symmetric above and below center)
+        y0 = max(0, center_y - bar_h)
+        y1 = min(vid_h, center_y + bar_h)
+        if y1 > y0:
+            frame[y0:y1, x : x + _BAR_W] = _BAR_COLOR
+
+        x += stride
+
+    return frame
+
+
 async def execute(
     input: WorkflowInputSchema, ctx: StepContext
 ) -> WaveformOverlayStepOutput | SkippedStepOutput:
-    """Render animated waveform overlay on the stitched video.
+    """Generate standalone animated waveform visualization video.
 
-    Produces a second WAVEFORM_VIDEO blob with a 140px animated player bar
-    burned in at the bottom. Skips if stitch_final produced no video.
+    Produces a WAVEFORM_VIDEO blob: dark navy full-frame background with
+    symmetric waveform bars and a cross/diamond burst at the playhead that
+    pulses per word based on audio amplitude.
 
     Args:
-        input: Workflow input (premise, voice_name, stitch_video).
-        ctx: Step context with workflow_run_id and parent outputs.
+        input: Workflow input schema.
+        ctx: Step context with parent outputs.
 
     Returns:
         WaveformOverlayStepOutput on success, SkippedStepOutput if no video.
@@ -315,45 +254,9 @@ async def execute(
     video_blob_id = uuid.UUID(stitch_out.final_video_blob_id)
     audio_blob_id = uuid.UUID(stitch_out.final_audio_blob_id)
 
-    log.info(
-        "waveform_overlay: starting workflow_id=%s video=%s",
-        workflow_run_id,
-        video_blob_id,
-    )
+    log.info("waveform_overlay: starting workflow_id=%s", workflow_run_id)
 
-    # --- Metadata ---
-    title = input.premise[:60]  # fallback title from premise
-    subtitle = input.premise[:40]
-
-    # Try to get story title from DB
-    async with session_maker() as session:
-        from sqlalchemy import text as sa_text
-        story_row = await session.execute(
-            sa_text(
-                "SELECT title FROM stories WHERE workflow_id = :wf_id "
-                "ORDER BY created_at DESC LIMIT 1"
-            ),
-            {"wf_id": workflow_id},
-        )
-        story_rec = story_row.first()
-        if story_rec and story_rec[0]:
-            title = str(story_rec[0])
-
-    # --- Album art: first completed scene ---
-    art_img: Image.Image | None = None
-    async with session_maker() as session:
-        scenes = await get_scenes_for_workflow(session, workflow_id)
-
-    completed = [s for s in scenes if s.image_blob_id is not None]
-    if completed:
-        async with session_maker() as session:
-            art_blob = await blob_service.get(session, completed[0].image_blob_id)
-        try:
-            art_img = _rounded_thumbnail(art_blob.data, _ART_SIZE)
-        except Exception:
-            log.warning("waveform_overlay: failed to decode album art, skipping")
-
-    # --- Fetch video + audio blobs → temp files ---
+    # --- Fetch blobs ---
     async with session_maker() as session:
         video_blob = await blob_service.get(session, video_blob_id)
         audio_blob = await blob_service.get(session, audio_blob_id)
@@ -367,47 +270,34 @@ async def execute(
         video_in.write_bytes(video_blob.data)
         audio_in.write_bytes(audio_blob.data)
 
-        # --- ffprobe ---
+        # Probe input video for dimensions and FPS
         fps, vid_w, vid_h = await _ffprobe_video(str(video_in))
         log.info("waveform_overlay: video %dx%d @%.2ffps", vid_w, vid_h, fps)
 
-        # --- Decode audio + compute fine-resolution envelope for scrolling ---
+        # Decode audio and compute envelopes
         samples = await _decode_audio_f32(str(audio_in))
-        fine_envs = _compute_envelope(samples, _FINE_STEPS)
+        coarse_envs = _compute_envelope(samples, _COARSE_STEPS)
+        frame_amps = _compute_frame_amplitudes(samples, fps)
 
-        # --- Pre-render static frame (no bars — drawn per-frame) ---
-        static_pil = _build_static_frame(art_img, title, subtitle)
-        static_arr = np.array(static_pil, dtype=np.uint8)
+        # Pre-filled background (dark navy, reused every frame)
+        background: np.ndarray[Any, np.dtype[np.uint8]] = np.zeros(
+            (vid_h, vid_w, 3), dtype=np.uint8
+        )
+        background[:] = _BG_COLOR
 
-        # --- Compute frame count from video duration ---
         duration_sec = stitch_out.total_duration_sec
         total_frames = max(1, int(duration_sec * fps))
 
-        # --- Text x0/x1 for waveform region (mirrors _build_static_frame) ---
-        art_end_x = _ART_X + _ART_SIZE + 12
-        ctrl_x = _VIDEO_W - 90
-        waveform_x0 = art_end_x
-        waveform_x1 = ctrl_x - 20
+        log.info("waveform_overlay: rendering %d frames", total_frames)
 
-        # --- Launch ffmpeg to read input video + PNG pipe as overlay ---
-        bar_h = _BAR_H
+        # Launch ffmpeg: PNG frames on stdin + audio file → output video
         ffmpeg_cmd = [
             "ffmpeg", "-y",
-            "-i", str(video_in),
             "-f", "image2pipe",
             "-framerate", f"{fps:.6f}",
             "-vcodec", "png",
             "-i", "pipe:0",
-            "-filter_complex",
-            (
-                f"[0:v]split[v1][v2];"
-                f"[v2]crop=iw:{bar_h}:0:ih-{bar_h},"
-                f"boxblur=luma_radius=15:luma_power=2[blurred];"
-                f"[v1][blurred]overlay=0:H-{bar_h}[bgblur];"
-                f"[bgblur][1:v]overlay=0:H-{bar_h}:format=auto[final]"
-            ),
-            "-map", "[final]",
-            "-map", "0:a",
+            "-i", str(audio_in),
             "-c:v", "libx264",
             "-pix_fmt", "yuv420p",
             "-c:a", "copy",
@@ -423,13 +313,13 @@ async def execute(
 
         assert proc.stdin is not None
 
-        # Stream PNG frames to ffmpeg stdin
+        # Render and stream frames to ffmpeg
         for frame_idx in range(total_frames):
-            progress = frame_idx / max(1, total_frames - 1)
             frame_arr = _render_frame(
-                static_arr, fine_envs, progress, waveform_x0, waveform_x1
+                background, coarse_envs, frame_amps,
+                frame_idx, total_frames, vid_w, vid_h,
             )
-            pil_frame = Image.fromarray(frame_arr, mode="RGBA")
+            pil_frame = Image.fromarray(frame_arr, mode="RGB")
             buf = io.BytesIO()
             pil_frame.save(buf, format="PNG")
             proc.stdin.write(buf.getvalue())
