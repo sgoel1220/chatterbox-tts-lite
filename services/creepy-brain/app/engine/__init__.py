@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     WorkflowEngine: Any
     engine: Any
+    BaseStepParams: Any
     EmptyStepOutput: Any
     SkippedStepOutput: Any
     StepContext: Any
@@ -45,6 +46,7 @@ if not TYPE_CHECKING:
     engine = getattr(_engine_module, "engine")
 
     _models_module = import_module("app.engine.models")
+    BaseStepParams = getattr(_models_module, "BaseStepParams")
     EmptyStepOutput = getattr(_models_module, "EmptyStepOutput")
     SkippedStepOutput = getattr(_models_module, "SkippedStepOutput")
     StepContext = getattr(_models_module, "StepContext")
@@ -67,6 +69,7 @@ __all__ = [
     "StepDef",
     "StepFn",
     "StepContext",
+    "BaseStepParams",
     "SkippedStepOutput",
     "EmptyStepOutput",
     "WorkflowRunner",

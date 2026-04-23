@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.engine import SkippedStepOutput, StepContext
+from app.engine import StepContext
 
 from app.audio.encoding import encode_wav_to_mp3
 from app.models.enums import BlobType, ChunkStatus
@@ -55,7 +55,7 @@ class StitchStepOutput(BaseModel):
     total_duration_sec: float = Field(ge=0, description="Total audio duration in seconds")
 
 
-async def execute(input: WorkflowInputSchema, ctx: StepContext) -> StitchStepOutput | SkippedStepOutput:
+async def execute(input: WorkflowInputSchema, ctx: StepContext) -> StitchStepOutput:
     """Stitch audio chunks and optionally create video with images.
 
     Supports resume: if final audio/video blobs already exist for this
@@ -68,11 +68,6 @@ async def execute(input: WorkflowInputSchema, ctx: StepContext) -> StitchStepOut
     Returns:
         Pydantic output model, or skipped output if stitching is disabled.
     """
-    # Early return if stitching disabled
-    if not input.stitch_video:
-        log.info("stitch_final skipped: stitch_video=False")
-        return SkippedStepOutput(reason="stitch_video=False")
-
     workflow_run_id: str = ctx.workflow_run_id
     workflow_id = get_optional_workflow_id(workflow_run_id)
 
@@ -103,7 +98,7 @@ async def execute(input: WorkflowInputSchema, ctx: StepContext) -> StitchStepOut
     existing_video_id: uuid.UUID | None = existing_blobs.get(BlobType.FINAL_VIDEO)
 
     # If both exist (or audio exists and no video needed), return early
-    needs_video: bool = input.stitch_video
+    needs_video = True  # Runner only calls this step when stitch_params.enabled=True
     if existing_audio_id is not None:
         if not needs_video or existing_video_id is not None:
             log.info(
