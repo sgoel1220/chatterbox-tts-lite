@@ -18,6 +18,12 @@ import uuid
 from pydantic import BaseModel
 
 from app.engine import SkippedStepOutput, StepContext, StepDef, WorkflowDef, engine
+from app.models.json_schemas import (
+    ImageStepParams,
+    StitchStepParams,
+    StoryStepParams,
+    TtsStepParams,
+)
 from app.engine.models import StepOutputMap
 from app.models.json_schemas import (
     WaveformOverlayStepOutput,
@@ -51,13 +57,6 @@ def _to_uuid(val: object) -> uuid.UUID | None:
 
 async def _on_pipeline_complete(workflow_run_id: str, outputs: StepOutputMap) -> None:
     """Mark workflow COMPLETED in DB after all steps succeed."""
-    stitch_out = outputs.get("stitch_final")
-    if isinstance(stitch_out, SkippedStepOutput):
-        log.info("on_complete: stitch_final was skipped, not updating workflow DB")
-        return
-    if not isinstance(stitch_out, stitch.StitchStepOutput):
-        log.warning("on_complete: stitch_final output missing or wrong type")
-        return
     workflow_id = _to_uuid(workflow_run_id)
     if workflow_id is None:
         return
@@ -67,6 +66,33 @@ async def _on_pipeline_complete(workflow_run_id: str, outputs: StepOutputMap) ->
     waveform_video_blob_id: uuid.UUID | None = None
     if isinstance(waveform_out, WaveformOverlayStepOutput):
         waveform_video_blob_id = waveform_out.waveform_video_blob_id
+
+    stitch_out = outputs.get("stitch_final")
+
+    # When stitch was skipped (disabled), still complete the workflow with partial results
+    if isinstance(stitch_out, SkippedStepOutput):
+        log.info("on_complete: stitch_final was skipped, completing with partial result")
+        await ensure_db()
+        async with get_session_maker()() as session:
+            svc = WorkflowService(session)
+            wf_result = WorkflowResultSchema(
+                story_id=None,
+                run_id=None,
+                final_audio_blob_id=None,
+                final_video_blob_id=None,
+                waveform_video_blob_id=waveform_video_blob_id,
+                total_duration_sec=None,
+                chunk_count=None,
+                gpu_pod_id=None,
+                total_cost_cents=None,
+            )
+            await svc.complete_workflow(workflow_id, wf_result)
+            await session.commit()
+        return
+
+    if not isinstance(stitch_out, stitch.StitchStepOutput):
+        log.warning("on_complete: stitch_final output missing or wrong type")
+        return
 
     await ensure_db()
     async with get_session_maker()() as session:
@@ -112,6 +138,8 @@ content_pipeline_def = WorkflowDef(
             timeout_sec=3600,
             max_retries=2,
             auto_pause_after=True,
+            params_schema=StoryStepParams,
+            params_field="story_params",
         ),
         StepDef(
             name="tts_synthesis",
@@ -119,6 +147,8 @@ content_pipeline_def = WorkflowDef(
             parents=["generate_story"],
             timeout_sec=86400,
             max_retries=2,
+            params_schema=TtsStepParams,
+            params_field="tts_params",
         ),
         StepDef(
             name="image_generation",
@@ -126,12 +156,16 @@ content_pipeline_def = WorkflowDef(
             parents=["tts_synthesis"],
             timeout_sec=86400,
             max_retries=2,
+            params_schema=ImageStepParams,
+            params_field="image_params",
         ),
         StepDef(
             name="stitch_final",
             fn=stitch.execute,
             parents=["image_generation"],
             timeout_sec=3600,
+            params_schema=StitchStepParams,
+            params_field="stitch_params",
         ),
         StepDef(
             name="waveform_overlay",

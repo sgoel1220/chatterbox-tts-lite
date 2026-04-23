@@ -112,11 +112,16 @@ async def execute(input: WorkflowInputSchema, ctx: StepContext) -> GenerateStory
     set_llm_workflow_context(workflow_uuid)
     try:
         async with session_maker() as session:
+            # Resolve target_word_count from step params, falling back to input
+            from app.models.json_schemas import StoryStepParams
+            target_wc = input.target_word_count
+            if isinstance(ctx.step_params, StoryStepParams):
+                target_wc = ctx.step_params.target_word_count
             await orchestrator.run_pipeline(
                 story_id=story_id,
                 premise=premise,
                 session=session,
-                target_word_count=input.target_word_count,
+                target_word_count=target_wc,
             )
     finally:
         set_llm_workflow_context(None)

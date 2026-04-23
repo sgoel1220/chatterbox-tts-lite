@@ -209,12 +209,51 @@ export function fetchWorkflowCost(id: string): Promise<WorkflowCost> {
   return api(`/api/costs/workflow/${id}`);
 }
 
+// Per-step param types (mirrors Python BaseStepParams subclasses)
+export interface StoryStepParams {
+  enabled?: boolean;
+  max_revisions?: number;
+  target_word_count?: number;
+}
+
+export interface TtsStepParams {
+  enabled?: boolean;
+}
+
+export interface ImageStepParams {
+  enabled?: boolean;
+}
+
+export interface StitchStepParams {
+  enabled?: boolean;
+}
+
 export interface CreateWorkflowRequest {
   premise: string;
   voice_name: string;
-  target_word_count: number;
+  story_params?: StoryStepParams;
+  tts_params?: TtsStepParams;
+  image_params?: ImageStepParams;
+  stitch_params?: StitchStepParams;
+  // Deprecated — kept for backwards compat
+  target_word_count?: number;
   generate_images?: boolean;
   stitch_video?: boolean;
+}
+
+// Schema discovery types
+export interface StepParamSchemaEntry {
+  step_name: string;
+  params_field: string;
+  json_schema: Record<string, unknown>;
+}
+
+export interface PipelineSchemaResponse {
+  steps: StepParamSchemaEntry[];
+}
+
+export function fetchPipelineSchema(): Promise<PipelineSchemaResponse> {
+  return api("/api/workflows/schema");
 }
 
 export interface VoiceResponse {

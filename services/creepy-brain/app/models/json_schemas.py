@@ -5,8 +5,9 @@ from __future__ import annotations
 import uuid
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
+from app.engine.models import BaseStepParams
 from app.validation_limits import (
     DEFAULT_STORY_TARGET_WORD_COUNT,
     MAX_REVISIONS_MAX,
@@ -16,30 +17,49 @@ from app.validation_limits import (
 )
 
 
+# Per-step configurable parameter models
+class StoryStepParams(BaseStepParams):
+    """Configurable params for the story generation step.
+
+    Story is a required step and cannot be disabled.
+    """
+
+    enabled: Literal[True] = True
+    max_revisions: int = Field(default=3, ge=MAX_REVISIONS_MIN, le=MAX_REVISIONS_MAX)
+    target_word_count: int = Field(
+        default=DEFAULT_STORY_TARGET_WORD_COUNT,
+        ge=WORKFLOW_TARGET_WORD_COUNT_MIN,
+        le=WORKFLOW_TARGET_WORD_COUNT_MAX,
+    )
+
+
+class TtsStepParams(BaseStepParams):
+    """Configurable params for the TTS synthesis step.
+
+    TTS is a required step and cannot be disabled.
+    """
+
+    enabled: Literal[True] = True
+
+
+class ImageStepParams(BaseStepParams):
+    """Configurable params for the image generation step."""
+
+    enabled: bool = Field(default=False, description="Whether to generate scene images via GPU pod")
+
+
+class StitchStepParams(BaseStepParams):
+    """Configurable params for the stitch/video step."""
+
+    enabled: bool = Field(default=False, description="Whether to stitch final video")
+
+
 # Workflow Input/Output Schemas
 class WorkflowInputSchema(BaseModel):
     """Input data for a content pipeline workflow."""
 
     premise: str = Field(..., description="Story premise or prompt")
     voice_name: str = Field(..., description="Voice to use for TTS")
-    generate_images: bool = Field(
-        default=False, description="Whether to generate scene images via GPU pod"
-    )
-    stitch_video: bool = Field(
-        default=False, description="Whether to stitch final video (not yet implemented, bead ea6)"
-    )
-    max_revisions: int = Field(
-        default=3,
-        ge=MAX_REVISIONS_MIN,
-        le=MAX_REVISIONS_MAX,
-        description="Max story revision attempts",
-    )
-    target_word_count: int = Field(
-        default=DEFAULT_STORY_TARGET_WORD_COUNT,
-        ge=WORKFLOW_TARGET_WORD_COUNT_MIN,
-        le=WORKFLOW_TARGET_WORD_COUNT_MAX,
-        description="Target word count for story",
-    )
     manual_story_text: str | None = Field(
         default=None,
         description=(
@@ -47,6 +67,47 @@ class WorkflowInputSchema(BaseModel):
             "Useful for manually authored or externally generated stories."
         ),
     )
+
+    # Per-step params (fully typed, each with its own model)
+    story_params: StoryStepParams = Field(default_factory=StoryStepParams)
+    tts_params: TtsStepParams = Field(default_factory=TtsStepParams)
+    image_params: ImageStepParams = Field(default_factory=ImageStepParams)
+    stitch_params: StitchStepParams = Field(default_factory=StitchStepParams)
+
+    # Deprecated — kept for backwards compat with existing DB rows
+    generate_images: bool = Field(
+        default=False, description="Deprecated: use image_params.enabled instead"
+    )
+    stitch_video: bool = Field(
+        default=False, description="Deprecated: use stitch_params.enabled instead"
+    )
+    max_revisions: int = Field(
+        default=3,
+        ge=MAX_REVISIONS_MIN,
+        le=MAX_REVISIONS_MAX,
+        description="Deprecated: use story_params.max_revisions instead",
+    )
+    target_word_count: int = Field(
+        default=DEFAULT_STORY_TARGET_WORD_COUNT,
+        ge=WORKFLOW_TARGET_WORD_COUNT_MIN,
+        le=WORKFLOW_TARGET_WORD_COUNT_MAX,
+        description="Deprecated: use story_params.target_word_count instead",
+    )
+
+    @model_validator(mode="after")
+    def _backfill_from_legacy(self) -> "WorkflowInputSchema":
+        """Migrate legacy flat fields into typed step params for old DB rows."""
+        if self.generate_images and not self.image_params.enabled:
+            self.image_params.enabled = True
+        if self.stitch_video and not self.stitch_params.enabled:
+            self.stitch_params.enabled = True
+        if self.target_word_count != DEFAULT_STORY_TARGET_WORD_COUNT:
+            if self.story_params.target_word_count == DEFAULT_STORY_TARGET_WORD_COUNT:
+                self.story_params.target_word_count = self.target_word_count
+        if self.max_revisions != 3:
+            if self.story_params.max_revisions == 3:
+                self.story_params.max_revisions = self.max_revisions
+        return self
 
 
 class WorkflowResultSchema(BaseModel):

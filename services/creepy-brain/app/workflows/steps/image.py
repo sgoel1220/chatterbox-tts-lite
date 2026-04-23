@@ -31,7 +31,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.engine import SkippedStepOutput, StepContext
+from app.engine import StepContext
 
 from app.config import settings
 from app.gpu import GpuPodSpec
@@ -148,7 +148,7 @@ def _scene_from_db(db_scene: WorkflowScene, chunk_indices: list[int]) -> SceneIm
 
 async def execute(
     input: WorkflowInputSchema, ctx: StepContext
-) -> ImageStepOutput | SkippedStepOutput:
+) -> ImageStepOutput:
     """Generate images for each scene using an image GPU pod.
 
     Pipeline:
@@ -166,11 +166,6 @@ async def execute(
     Returns:
         Pydantic output model, or skipped output if image generation is disabled.
     """
-    # --- 1. Check generate_images flag ---
-    if not input.generate_images:
-        log.info("image_generation skipped: generate_images=False")
-        return SkippedStepOutput(reason="generate_images=False")
-
     workflow_run_id: str = ctx.workflow_run_id
     workflow_id_uuid = get_optional_workflow_id(workflow_run_id)
 

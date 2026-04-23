@@ -17,6 +17,13 @@ StepOutputMap = dict[str, BaseModel]
 OnCompleteHook = Callable[[str, StepOutputMap], Awaitable[None]]
 
 
+
+class BaseStepParams(BaseModel):
+    """Base for per-step configurable parameters. Every step param model inherits this."""
+
+    enabled: bool = Field(default=True, description="Whether this step should run")
+
+
 class SkippedStepOutput(BaseModel):
     """Common output shape for workflow steps that are intentionally skipped."""
 
@@ -44,6 +51,10 @@ class StepContext(BaseModel):
     parent_outputs: StepOutputMap = Field(
         default_factory=dict,
         description="Keyed by step name, contains each completed parent step output model",
+    )
+    step_params: BaseStepParams | None = Field(
+        default=None,
+        description="Per-step typed params resolved from the workflow input",
     )
 
     def get_parent_output(self, step_name: str, output_type: type[_T]) -> _T | None:
@@ -74,6 +85,14 @@ class StepDef(BaseModel):
     auto_pause_after: bool = Field(
         default=False,
         description="If True, the workflow pauses after this step completes successfully",
+    )
+    params_schema: type[BaseStepParams] | None = Field(
+        default=None,
+        description="Pydantic model class for this step's configurable params (for schema discovery)",
+    )
+    params_field: str | None = Field(
+        default=None,
+        description="Attribute name on WorkflowInputSchema holding this step's params",
     )
 
 

@@ -1,8 +1,9 @@
 // Workflow list page
 
 import {
-  fetchWorkflows, fetchVoices, createWorkflow,
+  fetchWorkflows, fetchVoices, createWorkflow, fetchPipelineSchema,
   type WorkflowStatus, type WorkflowResponse, type VoiceResponse,
+  type PipelineSchemaResponse, type StepParamSchemaEntry,
 } from "../api.js";
 import { shortId, timeAgo, duration, statusClass, formatStep, esc } from "../utils.js";
 
@@ -127,9 +128,9 @@ async function handleCreate(e: Event): Promise<void> {
     const wf = await createWorkflow({
       premise,
       voice_name: voice,
-      target_word_count: words,
-      generate_images: generateImages,
-      stitch_video: stitchVideo,
+      story_params: { target_word_count: words },
+      image_params: { enabled: generateImages },
+      stitch_params: { enabled: stitchVideo },
     });
     // Navigate to the new workflow
     location.hash = `#/workflow/${wf.id}`;

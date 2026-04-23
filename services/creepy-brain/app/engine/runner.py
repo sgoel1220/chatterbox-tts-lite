@@ -29,7 +29,7 @@ import app.db as _db
 from app.log_buffer import step_name_var, workflow_id_var
 
 from .db_helpers import optional_session
-from .models import EmptyStepOutput, PauseAfterStep, StepDef, StepContext, StepOutputMap, WorkflowDef
+from .models import BaseStepParams, EmptyStepOutput, PauseAfterStep, StepDef, StepContext, StepOutputMap, WorkflowDef
 
 
 def _runtime_import(module_name: str) -> Any:
@@ -321,9 +321,24 @@ class WorkflowStepExecutor:
             await self._lifecycle._db_fail_step(step.name, error)
             return error
 
+        # --- Resolve per-step params and check enabled flag ---
+        step_params: BaseStepParams | None = None
+        if step.params_field is not None:
+            step_params = getattr(workflow_input, step.params_field, None)
+            if isinstance(step_params, BaseStepParams) and not step_params.enabled:
+                from .models import SkippedStepOutput
+                reason = f"{step.params_field}.enabled=False"
+                log.info("workflow %s: step '%s' skipped (%s)", self._workflow_id, step.name, reason)
+                skipped = SkippedStepOutput(reason=reason)
+                self._run_state.record_output(step.name, skipped)
+                await self._lifecycle._db_start_step(step.name)
+                await self._lifecycle._db_complete_step(step.name, skipped)
+                return None
+
         ctx = StepContext(
             workflow_run_id=str(self._workflow_id),
             parent_outputs=self._run_state.parent_outputs(step.parents),
+            step_params=step_params,
         )
 
         await self._lifecycle._db_start_step(step.name)

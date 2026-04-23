@@ -105,6 +105,42 @@ async def create_workflow(request: CreateWorkflowRequest, db: DbSession) -> Work
     return _to_response(workflow)
 
 
+
+
+class StepParamSchemaEntry(BaseModel):
+    """JSON Schema for a single step's configurable params."""
+
+    step_name: str
+    params_field: str
+    json_schema: dict[str, object]
+
+
+class PipelineSchemaResponse(BaseModel):
+    """Response for GET /api/workflows/schema."""
+
+    steps: list[StepParamSchemaEntry]
+
+
+@router.get("/schema", response_model=PipelineSchemaResponse)
+async def get_pipeline_schema() -> PipelineSchemaResponse:
+    """Return JSON Schema for each step's configurable params."""
+    workflow_def = engine._registry.get("ContentPipeline")
+    if workflow_def is None:
+        raise HTTPException(status_code=404, detail="ContentPipeline not registered")
+
+    entries: list[StepParamSchemaEntry] = []
+    for step in workflow_def.steps:
+        if step.params_schema is not None and step.params_field is not None:
+            entries.append(
+                StepParamSchemaEntry(
+                    step_name=step.name,
+                    params_field=step.params_field,
+                    json_schema=step.params_schema.model_json_schema(),
+                )
+            )
+    return PipelineSchemaResponse(steps=entries)
+
+
 @router.get("", response_model=list[WorkflowResponse])
 async def list_workflows(
     db: DbSession,
