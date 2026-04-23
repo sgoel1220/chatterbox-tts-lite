@@ -6,7 +6,9 @@
 #     -f services/music-server/Dockerfile \
 #     -t ghcr.io/sgoel1220/music-server:main --push .
 
-FROM pytorch/pytorch:2.5.1-cuda12.1-cudnn9-runtime
+# Use CUDA 12.8 base to match ACE-Step's torch==2.10.0+cu128 requirement.
+# Avoids installing a second torch on top of the old pytorch/pytorch base image.
+FROM nvidia/cuda:12.8.1-cudnn-runtime-ubuntu22.04
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
@@ -16,13 +18,24 @@ ENV HF_HUB_ENABLE_HF_TRANSFER=1
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
+# Install system deps + Python 3.11 (ace-step requires >=3.11,<3.13)
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    software-properties-common \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ffmpeg \
     git \
     libsndfile1 \
+    python3.11 \
+    python3.11-dev \
+    python3.11-distutils \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Set python3.11 as the default python/python3
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1 \
+    && update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
 
 # Install uv for faster package installs
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -39,7 +52,7 @@ RUN git clone https://github.com/ACE-Step/ACE-Step-1.5.git /app/ace-step \
 # Install nano-vllm first (bundled LLM backend; must precede ace-step install)
 RUN uv pip install --system --no-cache -e /app/ace-step/acestep/third_parts/nano-vllm
 
-# Install ACE-Step 1.5
+# Install ACE-Step 1.5 (installs torch 2.10.0+cu128 from pytorch-cu128 index)
 RUN uv pip install --system --no-cache -e /app/ace-step
 
 # Install remaining server dependencies
