@@ -57,7 +57,7 @@ Use the `/adversarial-review` skill command.
 
 ## Step 6 — Commit and push
 
-Stage relevant files, commit, and push immediately:
+Stage relevant files and commit. Do **not** `git pull --rebase` here — that happens in Step 8 after beads DB is committed.
 
 ```bash
 git add <files>
@@ -69,7 +69,6 @@ git commit -m "$(cat <<'EOF'
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 EOF
 )"
-git pull --rebase && git push origin main
 ```
 
 ---
@@ -96,7 +95,14 @@ After closing the bead, check if it had any parent beads that are now fully sati
 
 ## Step 8 — Push to remote
 
+Commit any dirty beads DB files **before** rebasing — never stash them.
+Mixing Dolt binary chunks from two DB states causes unresolvable binary conflicts.
+
 ```bash
+# Commit beads state if dirty (Dolt binary files cannot be stash-popped safely)
+git diff --quiet HEAD -- .beads/ || (git add .beads/ && git commit -m "chore(beads): sync db state")
+
+# Now rebase and push (working tree is clean, no stash needed)
 git pull --rebase
 git push origin main
 git status  # must show "up to date with origin"
