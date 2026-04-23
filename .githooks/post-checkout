@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Resync the local Beads/Dolt cache from issues.jsonl after branch switch.
+# $3 == 1 means branch checkout (not file checkout), so we only run then.
+[ "$3" = "1" ] || exit 0
+
+if command -v bd &>/dev/null; then
+    bd prime --quiet 2>/dev/null || true
+fi
