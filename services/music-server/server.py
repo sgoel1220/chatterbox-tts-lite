@@ -97,7 +97,8 @@ _model_error: str | None = None  # set on fatal load failure
 
 # Single-slot GPU execution lock: prevents concurrent generation calls from
 # racing shared model state and exhausting GPU memory.
-_gpu_busy = False
+# asyncio.Lock makes check-and-acquire atomic (plain bool is not safe).
+_gpu_lock = asyncio.Lock()
 
 
 def _get_device() -> str:
@@ -138,6 +139,7 @@ async def _ensure_models() -> tuple[AceStepHandler, LLMHandler]:
                 raise RuntimeError(f"DiT init failed: {msg}")
 
             checkpoint_dir = ACE_STEP_ROOT / "checkpoints"
+            checkpoint_dir.mkdir(parents=True, exist_ok=True)
             llm = _LLMHandler()
             msg, ok = await loop.run_in_executor(
                 None,
@@ -302,12 +304,9 @@ app = FastAPI(
 
 @app.get("/health")
 async def health() -> Response:
-    """Liveness/readiness check.
+    """Liveness check — returns 200 once models are loaded, 503 otherwise.
 
-    Returns 200 once both models are loaded successfully, 503 while still
-    loading or after a fatal load error.  The RunPod lifecycle polls this
-    endpoint and only marks the pod READY when it gets 200, so we must not
-    return 200 before the models are usable.
+    The Docker HEALTHCHECK polls /ready (not /health) for the same semantics.
     """
     if _model_error is not None:
         return Response(
@@ -342,11 +341,9 @@ async def ready() -> JSONResponse:
 @app.post("/generate")
 async def generate(request: GenerateRequest) -> Response:
     """Generate music from a text prompt. Returns raw WAV bytes (PCM-16, 48kHz)."""
-    global _gpu_busy
-    if _gpu_busy:
+    if _gpu_lock.locked():
         raise HTTPException(status_code=503, detail="GPU is busy processing another request. Please retry.")
-    _gpu_busy = True
-    try:
+    async with _gpu_lock:
         dit, llm = await _ensure_models()
         loop = asyncio.get_running_loop()
         try:
@@ -365,16 +362,12 @@ async def generate(request: GenerateRequest) -> Response:
         except Exception as exc:
             logger.exception("Generation failed")
             raise HTTPException(status_code=500, detail=str(exc)) from exc
-    finally:
-        _gpu_busy = False
     return Response(content=wav_bytes, media_type=WAV_MEDIA_TYPE)
 
 
 @app.post("/outpaint")
 async def outpaint(request: OutpaintRequest) -> Response:
     """Continue existing audio. Returns raw WAV bytes of the full extended track."""
-    global _gpu_busy
-
     # Decode and validate before touching the GPU.
     try:
         audio_wav_bytes = base64.b64decode(request.audio_context, validate=True)
@@ -386,10 +379,9 @@ async def outpaint(request: OutpaintRequest) -> Response:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    if _gpu_busy:
+    if _gpu_lock.locked():
         raise HTTPException(status_code=503, detail="GPU is busy processing another request. Please retry.")
-    _gpu_busy = True
-    try:
+    async with _gpu_lock:
         dit, llm = await _ensure_models()
         loop = asyncio.get_running_loop()
         try:
@@ -410,16 +402,7 @@ async def outpaint(request: OutpaintRequest) -> Response:
         except Exception as exc:
             logger.exception("Outpaint failed")
             raise HTTPException(status_code=500, detail=str(exc)) from exc
-    finally:
-        _gpu_busy = False
     return Response(content=wav_bytes, media_type=WAV_MEDIA_TYPE)
-
-
-@app.on_event("startup")
-async def startup_event() -> None:
-    """Pre-warm models in background on startup."""
-    logger.info("Starting music server on port 8007...")
-    asyncio.create_task(_ensure_models())
 
 
 # ---------------------------------------------------------------------------
