@@ -40,10 +40,32 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check if service files changed
+        id: changes
+        run: |
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE_SHA="${{ github.event.before }}"
+          fi
+          # Fall back to building if we can't determine what changed (e.g. first push)
+          CHANGED=$(git diff --name-only "$BASE_SHA" HEAD 2>/dev/null) || CHANGED=""
+          if [ -z "$CHANGED" ] \
+            || echo "${{ github.ref }}" | grep -q "^refs/tags/" \
+            || echo "$CHANGED" | grep -qE "^\.github/workflows/docker-build\.yml$" \
+            || echo "$CHANGED" | grep -qE "^services/${{ matrix.service.name }}/"; then
+            echo "needed=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "No changes in services/${{ matrix.service.name }} — skipping build"
+          fi
 
       # music-server installs torch 2.10.0+cu128 (~8 GB); free disk space first.
       - name: Free disk space (music-server only)
-        if: matrix.service.name == 'music-server'
+        if: matrix.service.name == 'music-server' && steps.changes.outputs.needed == 'true'
         uses: jlumbroso/free-disk-space@main
         with:
           tool-cache: false
@@ -55,9 +77,11 @@ jobs:
           swap-storage: true
 
       - name: Set up Docker Buildx
+        if: steps.changes.outputs.needed == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GitHub Container Registry
+        if: steps.changes.outputs.needed == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -65,6 +89,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract metadata (tags, labels) for Docker
+        if: steps.changes.outputs.needed == 'true'
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -77,6 +102,7 @@ jobs:
             type=sha,format=short
 
       - name: Build and push ${{ matrix.service.name }}
+        if: steps.changes.outputs.needed == 'true'
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -84,6 +110,7 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.service.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service.name }}
+          # music-server uses registry cache (torch layers exceed GHA's 10 GB limit)
+          cache-from: ${{ matrix.service.name == 'music-server' && format('type=registry,ref={0}/{1}/music-server-cache:buildcache', env.REGISTRY, github.repository_owner) || format('type=gha,scope={0}', matrix.service.name) }}
+          cache-to: ${{ matrix.service.name == 'music-server' && format('type=registry,ref={0}/{1}/music-server-cache:buildcache,mode=max', env.REGISTRY, github.repository_owner) || format('type=gha,mode=max,scope={0}', matrix.service.name) }}
           platforms: linux/amd64
