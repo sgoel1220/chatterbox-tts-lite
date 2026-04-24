@@ -474,6 +474,30 @@ function renderDetail(wf: WorkflowDetailResponse): string {
     `);
   }
 
+  // SFX Clips
+  if (wf.sfx_clips && wf.sfx_clips.length > 0) {
+    const sfxRows = wf.sfx_clips.map((clip) => {
+      const audioUrl = `/api/blobs/${clip.blob_id}`;
+      return `<tr>
+        <td>${clip.scene_index}</td>
+        <td>${clip.cue_index}</td>
+        <td>${esc(clip.position)}</td>
+        <td>${clip.duration_sec.toFixed(1)}s</td>
+        <td>${esc(clip.description)}</td>
+        <td><audio class="chunk-audio" controls preload="none" src="${audioUrl}"></audio><a class="dl-link" href="${audioUrl}" download="sfx-${clip.scene_index}-${clip.cue_index}.wav" title="Download">⬇</a></td>
+      </tr>`;
+    }).join("");
+    parts.push(`
+      <div class="section">
+        <h3>SFX Clips (${wf.sfx_clips.length})</h3>
+        <table>
+          <thead><tr><th>Scene</th><th>Cue</th><th>Position</th><th>Duration</th><th>Description</th><th>Audio</th></tr></thead>
+          <tbody>${sfxRows}</tbody>
+        </table>
+      </div>
+    `);
+  }
+
   // Chunks (paginated)
   if (wf.chunks.length > 0) {
     const totalPages = Math.ceil(wf.chunks.length / CHUNKS_PER_PAGE);
@@ -606,6 +630,21 @@ function renderDetail(wf: WorkflowDetailResponse): string {
           </video>
           <div class="output-meta">
             <a href="${waveformUrl}" download="video-waveform.mp4" class="btn btn-sm">Download MP4</a>
+          </div>
+        </div>
+      `);
+    }
+
+    if (r.music_bed_blob_id) {
+      const musicUrl = `/api/blobs/${r.music_bed_blob_id}`;
+      outputParts.push(`
+        <div class="output-block">
+          <h4>Music Bed</h4>
+          <audio controls preload="metadata" style="width:100%">
+            <source src="${musicUrl}" type="audio/wav">
+          </audio>
+          <div class="output-meta">
+            <a href="${musicUrl}" download="music-bed.wav" class="btn btn-sm">Download WAV</a>
           </div>
         </div>
       `);

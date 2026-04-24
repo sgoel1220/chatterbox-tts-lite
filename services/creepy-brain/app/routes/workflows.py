@@ -17,10 +17,12 @@ from app.models.enums import StepName, WorkflowStatus, WorkflowType
 from app.models.workflow import Workflow, WorkflowScene, WorkflowStep
 from app.models.gpu_pod import GpuPod
 from app.log_buffer import log_buffer
+from app.models.json_schemas import SfxGenerationStepOutput
 from app.schemas.workflow import (
     CreateWorkflowRequest,
     EncodeMp3Response,
     GpuPodResponse,
+    SfxClipResponse,
     WorkflowChunkResponse,
     WorkflowDetailResponse,
     WorkflowLogEntryResponse,
@@ -169,6 +171,28 @@ async def get_workflow(workflow_id: uuid.UUID, db: DbSession) -> WorkflowDetailR
     )
     pods = pods_result.scalars().all()
 
+    # Extract SFX clips from the latest sfx_generation step output
+    sfx_clips: list[SfxClipResponse] = []
+    sfx_step = next(
+        (
+            s for s in sorted(workflow.steps, key=lambda s: s.attempt_number, reverse=True)
+            if s.step_name == StepName.SFX_GENERATION and s.output_json is not None
+        ),
+        None,
+    )
+    if sfx_step is not None and isinstance(sfx_step.output_json, SfxGenerationStepOutput):
+        sfx_clips = [
+            SfxClipResponse(
+                scene_index=clip.scene_index,
+                cue_index=clip.cue_index,
+                description=clip.description,
+                blob_id=clip.blob_id,
+                duration_sec=clip.duration_sec,
+                position=clip.position,
+            )
+            for clip in sfx_step.output_json.clips
+        ]
+
     return WorkflowDetailResponse(
         id=workflow.id,
         status=workflow.status,
@@ -230,6 +254,7 @@ async def get_workflow(workflow_id: uuid.UUID, db: DbSession) -> WorkflowDetailR
             )
             for p in pods
         ],
+        sfx_clips=sfx_clips,
     )
 
 

@@ -47,10 +47,20 @@ export interface WorkflowResult {
   final_audio_blob_id: string | null;
   final_video_blob_id: string | null;
   waveform_video_blob_id: string | null;
+  music_bed_blob_id: string | null;
   total_duration_sec: number | null;
   chunk_count: number | null;
   gpu_pod_id: string | null;
   total_cost_cents: number | null;
+}
+
+export interface SfxClip {
+  scene_index: number;
+  cue_index: number;
+  description: string;
+  blob_id: string;
+  duration_sec: number;
+  position: string;
 }
 
 export interface WorkflowStep {
@@ -101,6 +111,7 @@ export interface WorkflowDetailResponse extends WorkflowResponse {
   chunks: WorkflowChunk[];
   scenes: WorkflowScene[];
   gpu_pods: WorkflowGpuPod[];
+  sfx_clips: SfxClip[];
 }
 
 export interface CostSummary {

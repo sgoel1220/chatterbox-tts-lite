@@ -111,6 +111,15 @@ class WorkflowLogEntryResponse(BaseModel):
     step: str | None
 
 
+class SfxClipResponse(BaseModel):
+    scene_index: int
+    cue_index: int
+    description: str
+    blob_id: str
+    duration_sec: float
+    position: str
+
+
 class WorkflowDetailResponse(WorkflowResponse):
     input: WorkflowInputSchema
     result: WorkflowResultSchema | None
@@ -118,6 +127,7 @@ class WorkflowDetailResponse(WorkflowResponse):
     chunks: list[WorkflowChunkResponse]
     scenes: list[WorkflowSceneResponse]
     gpu_pods: list[GpuPodResponse]
+    sfx_clips: list[SfxClipResponse] = Field(default_factory=list)
 
 
 class EncodeMp3Response(BaseModel):
