@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker compose -f /home/sg/chatterbox-tts-lite/services/creepy-brain/docker-compose.yml exec postgres psql -U brain -d brain -c \"SELECT id, status, error, input_json, current_step FROM workflows WHERE id::text LIKE '32dcc2a5%';\")",
+      "Bash(docker compose -f /home/sg/chatterbox-tts-lite/services/creepy-brain/docker-compose.yml exec postgres psql -U postgres -d brain -c \"SELECT id, status, error, input_json, current_step FROM workflows WHERE id::text LIKE '32dcc2a5%';\" 2>&1)",
+      "Bash(docker ps --format '{{.Names}} {{.Image}}' 2>&1)",
+      "Bash(docker exec creepy-brain-postgres psql -U brain -d brain -c \"SELECT id, status, error, input_json, current_step FROM workflows WHERE id::text LIKE '32dcc2a5%';\" 2>&1)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "serena"
+  ]
+}
