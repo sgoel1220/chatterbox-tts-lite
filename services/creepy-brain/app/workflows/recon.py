@@ -21,7 +21,7 @@ from app.models.enums import GpuPodStatus, WorkflowStatus
 from app.models.gpu_pod import GpuPod
 from app.models.workflow import Workflow
 from app.workflows.db_helpers import ensure_db, get_session_maker
-from app.workflows.schemas import EmptyWorkflowInput
+from app.workflows.schemas import EmptyWorkflowInput, ReconStepOutput
 
 log = logging.getLogger(__name__)
 
@@ -35,7 +35,7 @@ RECON_CRON = "*/5 * * * *"
 
 async def _recon_orphaned_pods(
     input: EmptyWorkflowInput, ctx: StepContext
-) -> dict[str, object]:
+) -> ReconStepOutput:
     """Find and terminate orphaned GPU pods.
 
     Two-phase sweep:

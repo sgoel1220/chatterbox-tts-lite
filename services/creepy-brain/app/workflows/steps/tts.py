@@ -133,9 +133,9 @@ async def execute(input: WorkflowInputSchema, ctx: StepContext) -> TtsStepOutput
     story_id_for_text: uuid.UUID = story_result.story_id
     story_id_str: str = str(story_id_for_text)
 
-    _session_maker = get_session_maker()
-    async with _session_maker() as _session:
-        _story = await StoryService(_session).get(story_id_for_text)
+    session_maker = get_session_maker()
+    async with session_maker() as _session:
+        _story = await _story_service.get(_session, story_id_for_text)
 
     if _story is None:
         raise ValueError(f"Story {story_id_for_text} not found in database")

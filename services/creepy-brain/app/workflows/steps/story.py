@@ -14,7 +14,7 @@ from app.models.enums import StoryStatus
 from app.models.json_schemas import GenerateStoryStepOutput, WorkflowInputSchema
 from app.models.story import Story
 from app.pipeline import orchestrator
-from app.services.story_service import StoryService
+from app.services import story_service
 from app.workflows.db_helpers import get_session_maker
 
 log = logging.getLogger(__name__)
