@@ -41,7 +41,8 @@ RUN pip3 install --no-cache-dir \
     Pillow==10.3.0 \
     fastapi==0.111.0 \
     "uvicorn[standard]==0.30.1" \
-    pydantic==2.7.1
+    pydantic==2.7.1 \
+    requests==2.32.3
 
 # ── App ───────────────────────────────────────────────────────────────────
 WORKDIR /app
