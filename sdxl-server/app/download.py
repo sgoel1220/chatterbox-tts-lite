@@ -106,37 +106,36 @@ def main() -> None:
     else:
         log.info("BASE_CIVITAI_ID not set — server will load from HuggingFace at runtime")
 
-    # ── CivitAI LoRAs ────────────────────────────────────────────────────────
-    lora_ids_raw = os.getenv("LORA_CIVITAI_IDS", "").strip()
-    if lora_ids_raw:
-        for entry in lora_ids_raw.split(","):
-            entry = entry.strip()
-            if not entry:
-                continue
-            if ":" not in entry:
-                log.warning("Skipping bad LORA_CIVITAI_IDS entry (expected name:id): %s", entry)
-                continue
-            name, version_id = entry.split(":", 1)
-            dest = LORAS_DIR / f"{name.strip()}.safetensors"
-            _download(_civitai_url(version_id.strip()), dest, f"LoRA {name.strip()}")
+    # ── LoRAs (disabled by default — set ENABLE_LORAS=1 to download) ────────
+    enable_loras = os.getenv("ENABLE_LORAS", "0").strip().lower() in ("1", "true", "yes")
+    if not enable_loras:
+        log.info("LoRA downloads disabled (set ENABLE_LORAS=1 to enable)")
     else:
-        log.info("LORA_CIVITAI_IDS not set — no CivitAI LoRAs to download")
+        lora_ids_raw = os.getenv("LORA_CIVITAI_IDS", "").strip()
+        if lora_ids_raw:
+            for entry in lora_ids_raw.split(","):
+                entry = entry.strip()
+                if not entry:
+                    continue
+                if ":" not in entry:
+                    log.warning("Skipping bad LORA_CIVITAI_IDS entry (expected name:id): %s", entry)
+                    continue
+                name, version_id = entry.split(":", 1)
+                dest = LORAS_DIR / f"{name.strip()}.safetensors"
+                _download(_civitai_url(version_id.strip()), dest, f"LoRA {name.strip()}")
 
-    # ── HuggingFace LoRAs ────────────────────────────────────────────────────
-    lora_hf_raw = os.getenv("LORA_HF_REPOS", "").strip()
-    if lora_hf_raw:
-        for entry in lora_hf_raw.split(","):
-            entry = entry.strip()
-            if not entry:
-                continue
-            if ":" not in entry:
-                log.warning("Skipping bad LORA_HF_REPOS entry (expected name:owner/repo/file): %s", entry)
-                continue
-            name, repo_path = entry.split(":", 1)
-            dest = LORAS_DIR / f"{name.strip()}.safetensors"
-            _download(_hf_url(repo_path.strip()), dest, f"LoRA {name.strip()} (HF)")
-    else:
-        log.info("LORA_HF_REPOS not set — no HuggingFace LoRAs to download")
+        lora_hf_raw = os.getenv("LORA_HF_REPOS", "").strip()
+        if lora_hf_raw:
+            for entry in lora_hf_raw.split(","):
+                entry = entry.strip()
+                if not entry:
+                    continue
+                if ":" not in entry:
+                    log.warning("Skipping bad LORA_HF_REPOS entry (expected name:owner/repo/file): %s", entry)
+                    continue
+                name, repo_path = entry.split(":", 1)
+                dest = LORAS_DIR / f"{name.strip()}.safetensors"
+                _download(_hf_url(repo_path.strip()), dest, f"LoRA {name.strip()} (HF)")
 
     log.info("=== startup download complete ===")
 
