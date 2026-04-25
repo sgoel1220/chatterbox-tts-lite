@@ -54,6 +54,7 @@ def _download(url: str, dest: Path, label: str) -> None:
     headers = {}
     if "civitai.com" in url and CIVITAI_TOKEN:
         headers["Authorization"] = f"Bearer {CIVITAI_TOKEN}"
+    # Public CivitAI models work without a token — CIVITAI_TOKEN is optional
 
     print(f"  [download] {label} → {dest}")
     try:
@@ -82,6 +83,7 @@ def _civitai_url(version_id: str) -> str:
     if CIVITAI_TOKEN:
         url += f"?token={CIVITAI_TOKEN}"
     return url
+    # No token = public download (works for most models)
 
 
 def _hf_url(repo_path: str) -> str:
