@@ -34,6 +34,7 @@ env/
 **/.env
 
 # Ignore generated output and user data directories
+output/stories/*.md
 outputs/
 **/outputs/
 temp_audio_outputs/
