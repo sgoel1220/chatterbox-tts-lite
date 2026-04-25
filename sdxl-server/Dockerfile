@@ -46,9 +46,10 @@ RUN pip3 install --no-cache-dir \
 # ── App ───────────────────────────────────────────────────────────────────
 WORKDIR /app
 COPY sdxl-server/app/ /app/
+COPY sdxl-server/start.sh /start.sh
+RUN chmod +x /start.sh
 
-# Directories that will be volume-mounted at runtime
-RUN mkdir -p /loras /outputs
+RUN mkdir -p /models /loras /outputs
 
 EXPOSE 8000
 
@@ -65,4 +66,4 @@ StableDiffusionXLImg2ImgPipeline.from_pretrained('stabilityai/stable-diffusion-x
 print('Models cached.')"; \
     fi
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+CMD ["/start.sh"]

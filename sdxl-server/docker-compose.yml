@@ -20,13 +20,17 @@ services:
               count: all
               capabilities: [gpu]
     environment:
-      # Optional: only needed for private/gated HuggingFace models.
-      # SDXL 1.0 base and refiner are public — leave unset for normal use.
+      # ── CivitAI downloads (runs at every container start, skips existing files) ──
+      CIVITAI_TOKEN: "${CIVITAI_TOKEN:-}"
+      # CivitAI version ID for the base checkpoint (e.g. Juggernaut XL Ragnarok)
+      BASE_CIVITAI_ID: "${BASE_CIVITAI_ID:-}"
+      # Comma-separated name:version_id pairs for LoRAs
+      LORA_CIVITAI_IDS: "${LORA_CIVITAI_IDS:-}"
+      # HuggingFace LoRAs: comma-separated name:owner/repo/file.safetensors
+      LORA_HF_REPOS: "${LORA_HF_REPOS:-}"
+      # ── Optional ──────────────────────────────────────────────────────────
       HF_TOKEN: "${HF_TOKEN:-}"
-      # Optional: override LoRA scan dir (default /loras)
       LORAS_DIR: "${LORAS_DIR:-/loras}"
-      # HuggingFace cache dir — ensures weights survive restarts if
-      # you mount a persistent volume at /root/.cache/huggingface
       HF_HOME: "/root/.cache/huggingface"
       TRANSFORMERS_CACHE: "/root/.cache/huggingface/transformers"
       DIFFUSERS_CACHE: "/root/.cache/huggingface/diffusers"
