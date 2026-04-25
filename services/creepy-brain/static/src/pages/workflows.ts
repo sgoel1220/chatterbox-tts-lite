@@ -32,7 +32,7 @@ export function mount(container: HTMLElement): void {
           </div>
           <div class="form-field">
             <label for="wf-words">Word Count <span id="wf-words-val" class="muted">200</span></label>
-            <input type="range" id="wf-words" min="100" max="400" step="50" value="200">
+            <input type="range" id="wf-words" min="100" max="5000" step="100" value="200">
           </div>
           <div class="form-field">
             <label class="checkbox-label">

@@ -15,7 +15,7 @@ from app.models.json_schemas import GenerateStoryStepOutput, WorkflowInputSchema
 from app.models.story import Story
 from app.pipeline import orchestrator
 from app.services import story_service
-from app.workflows.db_helpers import get_session_maker
+from app.workflows.db_helpers import ensure_db, get_session_maker
 
 log = logging.getLogger(__name__)
 
@@ -29,9 +29,9 @@ async def execute(input: WorkflowInputSchema, ctx: StepContext) -> GenerateStory
     Raises:
         RuntimeError: If the pipeline did not complete successfully.
     """
-    await _ensure_db()
+    await ensure_db()
 
-    # _ensure_db() guarantees async_session_maker is initialised.
+    # ensure_db() guarantees async_session_maker is initialised.
     session_maker = get_session_maker()
 
     premise: str = input.premise
