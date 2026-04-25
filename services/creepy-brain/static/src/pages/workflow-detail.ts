@@ -478,12 +478,15 @@ function renderDetail(wf: WorkflowDetailResponse): string {
   if (wf.sfx_clips && wf.sfx_clips.length > 0) {
     const sfxRows = wf.sfx_clips.map((clip) => {
       const audioUrl = `/api/blobs/${clip.blob_id}`;
+      const promptPreview = clip.description.length > 120
+        ? esc(clip.description.slice(0, 120)) + "&hellip;"
+        : esc(clip.description);
       return `<tr>
         <td>${clip.scene_index}</td>
         <td>${clip.cue_index}</td>
         <td>${esc(clip.position)}</td>
         <td>${clip.duration_sec.toFixed(1)}s</td>
-        <td>${esc(clip.description)}</td>
+        <td class="scene-prompt-text" title="${esc(clip.description)}">${promptPreview}</td>
         <td><audio class="chunk-audio" controls preload="none" src="${audioUrl}"></audio><a class="dl-link" href="${audioUrl}" download="sfx-${clip.scene_index}-${clip.cue_index}.wav" title="Download">⬇</a></td>
       </tr>`;
     }).join("");
@@ -491,7 +494,7 @@ function renderDetail(wf: WorkflowDetailResponse): string {
       <div class="section">
         <h3>SFX Clips (${wf.sfx_clips.length})</h3>
         <table>
-          <thead><tr><th>Scene</th><th>Cue</th><th>Position</th><th>Duration</th><th>Description</th><th>Audio</th></tr></thead>
+          <thead><tr><th>Scene</th><th>Cue</th><th>Position</th><th>Duration</th><th>Prompt</th><th>Audio</th></tr></thead>
           <tbody>${sfxRows}</tbody>
         </table>
       </div>
