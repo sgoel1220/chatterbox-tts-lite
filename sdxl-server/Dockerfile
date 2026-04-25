@@ -53,6 +53,12 @@ RUN mkdir -p /models /loras /outputs
 
 EXPOSE 8000
 
+# ── Model defaults (no env vars needed at runtime) ────────────────────────
+# Juggernaut XL Ragnarok  — civitai.com/models/133005
+ENV BASE_CIVITAI_ID=1759168
+# ClassipeintXL v2.1 + Eldritch Impressionism v1.5
+ENV LORA_CIVITAI_IDS="ClassipeintXL_v2.1:356771,Eldritch_Impressionism:360775"
+
 # Warm-cache: allows HuggingFace model files to be baked in at build time
 # if BUILD_MODELS=1 is passed. Skip in fast builds.
 ARG BUILD_MODELS=0
