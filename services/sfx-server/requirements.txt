@@ -11,6 +11,12 @@ pydantic==2.11.3
 torchaudio==2.5.1
 soundfile==0.13.1
 
+# EzAudio transitive deps missing from its own requirements.txt:
+# - ffmpy: used at module level in audiotools/core/ffmpeg.py (FFmpeg wrapper)
+# - importlib_resources: used at module level in audiotools/core/playback.py
+ffmpy
+importlib_resources
+
 # HuggingFace model download (checkpoints auto-downloaded by EzAudio on first run)
 # transformers pinned to ensure compatibility with huggingface_hub 0.30+ (which removed
 # is_offline_mode from the public API; older transformers versions still import it)
