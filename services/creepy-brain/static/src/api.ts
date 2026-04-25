@@ -39,6 +39,7 @@ export interface WorkflowInput {
   stitch_video: boolean;
   max_revisions: number;
   target_word_count: number;
+  story_params?: { max_revisions?: number; target_word_count?: number };
 }
 
 export interface WorkflowResult {

@@ -393,8 +393,8 @@ function renderDetail(wf: WorkflowDetailResponse): string {
           <span>Voice</span><span>${esc(wf.input.voice_name)}</span>
           <span>Images</span><span>${wf.input.generate_images ? "Yes" : "No"}</span>
           <span>Video</span><span>${wf.input.stitch_video ? "Yes" : "No"}</span>
-          <span>Revisions</span><span>${wf.input.max_revisions}</span>
-          <span>Target Words</span><span>${wf.input.target_word_count.toLocaleString()}</span>
+          <span>Revisions</span><span>${wf.input.story_params?.max_revisions ?? wf.input.max_revisions}</span>
+          <span>Target Words</span><span>${(wf.input.story_params?.target_word_count ?? wf.input.target_word_count).toLocaleString()}</span>
         </div>
       </div>
     `);
