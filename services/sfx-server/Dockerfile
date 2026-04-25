@@ -36,6 +36,10 @@ ARG EZAUDIO_COMMIT=86f18268117dde73bb274401c610e639e4a8fae1
 RUN git clone https://github.com/haidog-yaqub/EzAudio.git /app/ezaudio \
     && git -C /app/ezaudio checkout "$EZAUDIO_COMMIT"
 
+# EzAudio uses relative paths (e.g. ckpts/ezaudio-xl.yml) so the working
+# directory must be the clone root for config + checkpoint resolution.
+WORKDIR /app/ezaudio
+
 # Install EzAudio dependencies
 RUN uv pip install --system --no-cache -r /app/ezaudio/requirements.txt
 
