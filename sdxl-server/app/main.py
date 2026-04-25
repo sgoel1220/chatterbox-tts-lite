@@ -148,6 +148,7 @@ def _load_models() -> None:
             log.info("xformers enabled for base pipe")
         except Exception as exc:
             log.warning("xformers not available for base pipe: %s", exc)
+        base_pipe.enable_vae_slicing()
     base_pipe.set_progress_bar_config(disable=True)
     log.info("Base model loaded.")
 
@@ -159,13 +160,18 @@ def _load_models() -> None:
         variant="fp16",
         token=HF_TOKEN,
     )
-    refiner_pipe = refiner_pipe.to(DEVICE)
     if DEVICE == "cuda":
+        # CPU offload: refiner weights stay in RAM, layers stream to GPU on demand.
+        # This saves ~8 GB VRAM vs .to("cuda") with negligible latency cost.
+        refiner_pipe.enable_model_cpu_offload()
         try:
             refiner_pipe.enable_xformers_memory_efficient_attention()
             log.info("xformers enabled for refiner pipe")
         except Exception as exc:
             log.warning("xformers not available for refiner pipe: %s", exc)
+        refiner_pipe.enable_vae_slicing()
+    else:
+        refiner_pipe = refiner_pipe.to(DEVICE)
     refiner_pipe.set_progress_bar_config(disable=True)
     log.info("Refiner model loaded.")
 
@@ -266,6 +272,10 @@ def _generate_sync(req: GenerateRequest) -> GenerateResponse:
         denoising_end=1.0 - req.refiner_denoise,
     )
     latents = base_output.images  # type: ignore[attr-defined]
+
+    # Free base-pass activations before refiner starts
+    if DEVICE == "cuda":
+        torch.cuda.empty_cache()
 
     # Refiner pass
     refiner_generator = torch.Generator(device=DEVICE).manual_seed(seed)
