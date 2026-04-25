@@ -19,6 +19,7 @@ import {
   type WorkflowCost,
   type StoryDetailResponse,
   type StepName,
+  type MusicSegment,
 } from "../api.js";
 import {
   shortId, timeAgo, duration, statusClass, formatStep, formatCost, esc,
@@ -640,6 +641,26 @@ function renderDetail(wf: WorkflowDetailResponse): string {
 
     if (wf.music_bed_blob_id) {
       const musicUrl = `/api/blobs/${wf.music_bed_blob_id}`;
+      const segRows = (wf.music_segments ?? []).map((seg: MusicSegment) => {
+        const segUrl = `/api/blobs/${seg.blob_id}`;
+        const intensityBar = seg.intensity > 0
+          ? `<span class="music-intensity" title="Intensity ${seg.intensity}/10">${"█".repeat(seg.intensity)}${"░".repeat(10 - seg.intensity)} ${seg.intensity}/10</span>`
+          : "";
+        const promptText = seg.prompt ? esc(seg.prompt) : '<span class="muted">—</span>';
+        return `<tr>
+          <td>${seg.scene_index}</td>
+          <td class="music-prompt-cell">${promptText}</td>
+          <td>${intensityBar}</td>
+          <td>${seg.duration_sec.toFixed(1)}s</td>
+          <td><audio class="chunk-audio" controls preload="none" src="${segUrl}"></audio><a class="dl-link" href="${segUrl}" download="music-scene-${seg.scene_index}.wav" title="Download">⬇</a></td>
+        </tr>`;
+      }).join("");
+      const segTable = segRows
+        ? `<table class="music-segments-table">
+            <thead><tr><th>Scene</th><th>Prompt</th><th>Intensity</th><th>Duration</th><th>Audio</th></tr></thead>
+            <tbody>${segRows}</tbody>
+          </table>`
+        : "";
       outputParts.push(`
         <div class="output-block">
           <h4>Music Bed</h4>
@@ -649,6 +670,7 @@ function renderDetail(wf: WorkflowDetailResponse): string {
           <div class="output-meta">
             <a href="${musicUrl}" download="music-bed.wav" class="btn btn-sm">Download WAV</a>
           </div>
+          ${segTable}
         </div>
       `);
     }

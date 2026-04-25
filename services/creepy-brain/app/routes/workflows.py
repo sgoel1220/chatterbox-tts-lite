@@ -19,6 +19,7 @@ from app.models.gpu_pod import GpuPod
 from app.log_buffer import log_buffer
 from app.models.json_schemas import MusicGenerationStepOutput, SfxGenerationStepOutput
 from app.schemas.workflow import (
+    MusicSegmentResponse,
     CreateWorkflowRequest,
     EncodeMp3Response,
     GpuPodResponse,
@@ -186,6 +187,25 @@ async def get_workflow(workflow_id: uuid.UUID, db: DbSession) -> WorkflowDetailR
         if music_step is not None and isinstance(music_step.output_json, MusicGenerationStepOutput):
             music_bed_blob_id = music_step.output_json.music_bed_blob_id
 
+    # Extract music segments from music_generation step output
+    music_segments: list[MusicSegmentResponse] = []
+    music_step_for_segments = next(
+        (s for s in sorted_steps if s.step_name == StepName.MUSIC_GENERATION and s.output_json is not None),
+        None,
+    )
+    if music_step_for_segments is not None and isinstance(music_step_for_segments.output_json, MusicGenerationStepOutput):
+        music_segments = [
+            MusicSegmentResponse(
+                scene_index=seg.scene_index,
+                chunk_indices=seg.chunk_indices,
+                duration_sec=seg.duration_sec,
+                blob_id=seg.music_blob_id,
+                prompt=seg.prompt,
+                intensity=seg.intensity,
+            )
+            for seg in music_step_for_segments.output_json.segments
+        ]
+
     # Extract SFX clips from the latest sfx_generation step output
     sfx_clips: list[SfxClipResponse] = []
     sfx_step = next(
@@ -268,6 +288,7 @@ async def get_workflow(workflow_id: uuid.UUID, db: DbSession) -> WorkflowDetailR
         ],
         sfx_clips=sfx_clips,
         music_bed_blob_id=music_bed_blob_id,
+        music_segments=music_segments,
     )
 
 

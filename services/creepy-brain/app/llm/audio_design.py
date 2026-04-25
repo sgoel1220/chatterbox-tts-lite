@@ -148,8 +148,15 @@ class SfxCueListResult(BaseModel):
 _MUSIC_MOOD_SYSTEM = """\
 You are a music director for a horror narration video series.
 
-Your task is to create an ACE-Step music generation prompt that captures the \
-emotional atmosphere of a scene from a creepy pasta story.
+Your task is to create an ACE-Step music generation prompt based SOLELY on the \
+emotional mood and atmosphere of a scene — NOT on its specific plot, characters, or events.
+
+Focus exclusively on:
+- The dominant emotion (e.g. dread, grief, unease, panic, melancholy, suspense)
+- The tension level and pacing feel
+- The general atmospheric quality (e.g. claustrophobic, desolate, creeping, surreal)
+
+Ignore story-specific details. Two scenes with the same mood should produce similar prompts.
 
 ACE-Step prompt format — combine these elements with commas:
 1. GENRE/MOOD: e.g. "dark ambient", "horror soundtrack", "eerie atmospheric"
@@ -159,19 +166,20 @@ ACE-Step prompt format — combine these elements with commas:
 
 Guidelines:
 - Keep prompts concise: 10–20 comma-separated descriptors
-- Match the intensity to the narrative stakes (1=calm ambience, 10=peak terror)
+- Match the intensity to the emotional stakes (1=calm ambience, 10=peak terror)
 - Prefer sparse, textural arrangements — narration must remain audible
 - STRICTLY instrumental — no vocals, choir, choral, or singing of any kind
 
 Output format: JSON object with "prompt" (string) and "intensity" (integer 1-10) keys."""
 
 _MUSIC_MOOD_USER = """\
-Scene text from a horror story:
+Scene text:
 ---
 {scene_text}
 ---
 
-Generate an ACE-Step music mood prompt and intensity score for this scene."""
+Identify the dominant emotional mood of this scene (ignore plot specifics), \
+then generate an ACE-Step music prompt and intensity score that fits that mood."""
 
 _SFX_SYSTEM = """\
 You are a sound designer for a horror narration video series.

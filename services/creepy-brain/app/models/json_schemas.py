@@ -249,6 +249,8 @@ class MusicSegmentResult(BaseModel):
     chunk_indices: list[int] = Field(description="Indices of chunks in this scene")
     duration_sec: float = Field(gt=0.0, description="Duration of this segment in seconds")
     music_blob_id: str = Field(description="UUID of the saved MUSIC_AUDIO WAV blob")
+    prompt: str = Field(default="", description="ACE-Step music mood prompt used for this segment")
+    intensity: int = Field(default=0, ge=0, le=10, description="Emotional intensity score (1-10, 0=unknown)")
 
 
 class MusicGenerationStepOutput(BaseModel):
