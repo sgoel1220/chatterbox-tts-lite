@@ -24,18 +24,27 @@ jobs:
           - name: tts-server
             dockerfile: services/tts-server/Dockerfile
             image: tts-server
+            source_path: services/tts-server/
           - name: creepy-brain
             dockerfile: services/creepy-brain/Dockerfile
             image: creepy-brain
+            source_path: services/creepy-brain/
           - name: image-server
             dockerfile: services/image-server/Dockerfile
             image: image-server
+            source_path: services/image-server/
           - name: music-server
             dockerfile: services/music-server/Dockerfile
             image: music-server
+            source_path: services/music-server/
           - name: sfx-server
             dockerfile: services/sfx-server/Dockerfile
             image: sfx-server
+            source_path: services/sfx-server/
+          - name: sdxl-server
+            dockerfile: sdxl-server/Dockerfile
+            image: sdxl-server
+            source_path: sdxl-server/
 
     steps:
       - name: Checkout repository
@@ -56,7 +65,7 @@ jobs:
           if [ -z "$CHANGED" ] \
             || echo "${{ github.ref }}" | grep -q "^refs/tags/" \
             || echo "$CHANGED" | grep -qE "^\.github/workflows/docker-build\.yml$" \
-            || echo "$CHANGED" | grep -qE "^services/${{ matrix.service.name }}/"; then
+            || echo "$CHANGED" | grep -qE "^${{ matrix.service.source_path }}"; then
             echo "needed=true"  >> "$GITHUB_OUTPUT"
           else
             echo "needed=false" >> "$GITHUB_OUTPUT"
@@ -64,8 +73,8 @@ jobs:
           fi
 
       # music-server installs torch 2.10.0+cu128 (~8 GB); free disk space first.
-      - name: Free disk space (music-server only)
-        if: matrix.service.name == 'music-server' && steps.changes.outputs.needed == 'true'
+      - name: Free disk space (large GPU images)
+        if: (matrix.service.name == 'music-server' || matrix.service.name == 'sdxl-server') && steps.changes.outputs.needed == 'true'
         uses: jlumbroso/free-disk-space@main
         with:
           tool-cache: false

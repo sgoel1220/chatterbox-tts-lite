@@ -45,7 +45,7 @@ RUN pip3 install --no-cache-dir \
 
 # ── App ───────────────────────────────────────────────────────────────────
 WORKDIR /app
-COPY app/ /app/
+COPY sdxl-server/app/ /app/
 
 # Directories that will be volume-mounted at runtime
 RUN mkdir -p /loras /outputs
