@@ -104,6 +104,15 @@ export interface WorkflowGpuPod {
   total_cost_cents: number;
 }
 
+export interface MusicSegment {
+  scene_index: number;
+  chunk_indices: number[];
+  duration_sec: number;
+  blob_id: string;
+  prompt: string;
+  intensity: number;
+}
+
 export interface WorkflowDetailResponse extends WorkflowResponse {
   input: WorkflowInput;
   result: WorkflowResult | null;
@@ -113,6 +122,7 @@ export interface WorkflowDetailResponse extends WorkflowResponse {
   gpu_pods: WorkflowGpuPod[];
   sfx_clips: SfxClip[];
   music_bed_blob_id: string | null;
+  music_segments: MusicSegment[];
 }
 
 export interface CostSummary {

@@ -536,6 +536,8 @@ async def _generate_pending_segments(
                 chunk_indices=scene.chunk_indices,
                 duration_sec=duration_sec,
                 music_blob_id=str(seg_blob.id),
+                prompt=mood.prompt,
+                intensity=mood.intensity,
             )
             results.append(seg_result)
             wav_list.append(wav_bytes)

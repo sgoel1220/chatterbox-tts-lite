@@ -120,6 +120,15 @@ class SfxClipResponse(BaseModel):
     position: str
 
 
+class MusicSegmentResponse(BaseModel):
+    scene_index: int
+    chunk_indices: list[int]
+    duration_sec: float
+    blob_id: str
+    prompt: str
+    intensity: int
+
+
 class WorkflowDetailResponse(WorkflowResponse):
     input: WorkflowInputSchema
     result: WorkflowResultSchema | None
@@ -129,6 +138,7 @@ class WorkflowDetailResponse(WorkflowResponse):
     gpu_pods: list[GpuPodResponse]
     sfx_clips: list[SfxClipResponse] = Field(default_factory=list)
     music_bed_blob_id: str | None = None
+    music_segments: list[MusicSegmentResponse] = Field(default_factory=list)
 
 
 class EncodeMp3Response(BaseModel):
