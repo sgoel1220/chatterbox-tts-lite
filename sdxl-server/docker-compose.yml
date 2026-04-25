@@ -20,8 +20,9 @@ services:
               count: all
               capabilities: [gpu]
     environment:
-      # Supply your HuggingFace token. On RunPod set this in Template Settings.
-      HF_TOKEN: "${HF_TOKEN}"
+      # Optional: only needed for private/gated HuggingFace models.
+      # SDXL 1.0 base and refiner are public — leave unset for normal use.
+      HF_TOKEN: "${HF_TOKEN:-}"
       # Optional: override LoRA scan dir (default /loras)
       LORAS_DIR: "${LORAS_DIR:-/loras}"
       # HuggingFace cache dir — ensures weights survive restarts if

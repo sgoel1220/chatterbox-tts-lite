@@ -80,7 +80,7 @@ Rescans `/loras` directory and updates the registry without restarting the serve
 ```bash
 # 1. Copy .env file
 cp .env.example .env
-# Edit .env and set HF_TOKEN
+# HF_TOKEN is optional — only needed for private/gated models
 
 # 2. Place .safetensors LoRA files in ./loras/
 
@@ -130,10 +130,10 @@ Or use the GitHub Actions workflow below to push to GHCR.
 
 3. Under **Environment Variables**, add:
 
-   | Key | Value |
-   |-----|-------|
-   | `HF_TOKEN` | `hf_xxxxxxxxxxxxxxxxxxxx` *(your token)* |
-   | `LORAS_DIR` | `/loras` *(optional, default)* |
+   | Key | Value | Required? |
+   |-----|-------|-----------|
+   | `HF_TOKEN` | `hf_xxxxxxxxxxxxxxxxxxxx` | No — SDXL 1.0 is public |
+   | `LORAS_DIR` | `/loras` | No — this is the default |
 
    > **Security note:** RunPod environment variables in template settings are stored encrypted and injected at runtime — they are not baked into the image.
 
