@@ -196,6 +196,41 @@ async def get_by_workflow(
     return result.scalar_one_or_none()
 
 
+async def ingest(
+    session: AsyncSession,
+    title: str,
+    premise: str,
+    full_text: str,
+    idempotency_key: str | None = None,
+) -> Story:
+    """Create a story with COMPLETED status from pre-written text (flush only).
+
+    If *idempotency_key* is provided and a story with that key already exists,
+    the existing row is returned without creating a duplicate.
+    """
+    if idempotency_key is not None:
+        existing = await session.execute(
+            select(Story).where(Story.idempotency_key == idempotency_key)
+        )
+        existing_story = existing.scalar_one_or_none()
+        if existing_story is not None:
+            return existing_story
+
+    story = Story(
+        premise=premise,
+        title=title,
+        status=StoryStatus.COMPLETED,
+        full_text=full_text,
+        word_count=len(full_text.split()),
+        completed_at=datetime.now(timezone.utc),
+        idempotency_key=idempotency_key,
+    )
+    session.add(story)
+    await session.flush()
+    await session.refresh(story)
+    return story
+
+
 async def fail_story(session: AsyncSession, story_id: uuid.UUID) -> None:
     """Mark story as failed (flush only)."""
     story = await _get_or_raise(session, story_id)

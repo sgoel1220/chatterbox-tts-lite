@@ -18,6 +18,7 @@ from app.schemas.story import (
     BuildStoryPromptsRequest,
     GenerateStoryRequest,
     GenerateStoryResponse,
+    IngestStoryRequest,
     StoryListItem,
     StoryResponse,
     UpdateStoryRequest,
@@ -57,6 +58,24 @@ def _story_to_response(story: Story) -> StoryResponse:
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
+
+
+@router.post("/ingest", response_model=StoryResponse, status_code=201)
+async def ingest_story(
+    body: IngestStoryRequest,
+    session: AsyncSession = Depends(get_session),
+) -> StoryResponse:
+    """Ingest a pre-written story with COMPLETED status, bypassing the pipeline."""
+    story = await story_service.ingest(
+        session,
+        title=body.title,
+        premise=body.premise,
+        full_text=body.full_text,
+        idempotency_key=body.idempotency_key,
+    )
+    await session.commit()
+    loaded = require_found(await story_service.get(session, story.id), "Story not found")
+    return _story_to_response(loaded)
 
 
 @router.post("/build-prompts", response_model=PromptPreviewResponse)

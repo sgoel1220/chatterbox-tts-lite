@@ -64,6 +64,19 @@ class UpdateStoryRequest(BaseModel):
     full_text: str = Field(..., min_length=1, description="Updated full story text")
 
 
+class IngestStoryRequest(BaseModel):
+    """Request body for ingesting a pre-written story."""
+
+    title: str = Field(..., min_length=1, max_length=500, description="Story title")
+    premise: str = Field(..., min_length=10, description="Story premise or idea")
+    full_text: str = Field(..., min_length=100, description="Complete story text")
+    idempotency_key: str | None = Field(
+        default=None,
+        max_length=128,
+        description="Optional caller-supplied key; replaying with the same key returns the existing story",
+    )
+
+
 class BuildStoryPromptsRequest(BaseModel):
     """Request body for previewing the prompts that story generation would use."""
 
