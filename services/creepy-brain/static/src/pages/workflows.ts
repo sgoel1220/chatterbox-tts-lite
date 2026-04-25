@@ -3,10 +3,11 @@
 import {
   fetchWorkflows, fetchVoices, createWorkflow, fetchPipelineSchema,
   type WorkflowStatus, type WorkflowResponse, type VoiceResponse,
-  type PipelineSchemaResponse, type StepParamSchemaEntry,
+  type CreateWorkflowRequest,
 } from "../api.js";
 import { shortId, timeAgo, duration, statusClass, formatStep, esc } from "../utils.js";
 import { patchHTML } from "../dom.js";
+import { renderStepSections, collectParams, bindSliderLabels } from "../schema-form.js";
 
 const STATUSES: (WorkflowStatus | "all")[] = [
   "all", "running", "paused", "completed", "failed", "cancelled",
@@ -14,6 +15,7 @@ const STATUSES: (WorkflowStatus | "all")[] = [
 
 let currentFilter: WorkflowStatus | undefined;
 let pollTimer: ReturnType<typeof setInterval> | undefined;
+let schemaReady = false;
 
 export function mount(container: HTMLElement): void {
   container.innerHTML = `
@@ -31,28 +33,11 @@ export function mount(container: HTMLElement): void {
               <option value="">Loading...</option>
             </select>
           </div>
-          <div class="form-field">
-            <label for="wf-words">Word Count <span id="wf-words-val" class="muted">200</span></label>
-            <input type="range" id="wf-words" min="100" max="5000" step="100" value="200">
-          </div>
-          <div class="form-field">
-            <label class="checkbox-label">
-              <input type="checkbox" id="wf-images"> Generate images
-            </label>
-            <label class="checkbox-label">
-              <input type="checkbox" id="wf-music"> Background music
-            </label>
-            <label class="checkbox-label">
-              <input type="checkbox" id="wf-sfx"> Sound effects
-            </label>
-            <label class="checkbox-label">
-              <input type="checkbox" id="wf-stitch"> Stitch video
-            </label>
-          </div>
           <div class="form-field form-field-btn">
-            <button type="submit" class="btn" id="wf-submit">Create</button>
+            <button type="submit" class="btn" id="wf-submit" disabled>Create</button>
           </div>
         </div>
+        <div id="wf-step-params" class="step-sections"></div>
         <div id="wf-create-error" class="error" style="display:none"></div>
       </form>
     </div>
@@ -62,17 +47,9 @@ export function mount(container: HTMLElement): void {
     <div id="wf-list" class="list"></div>
   `;
 
-  // Load voices
   loadVoices();
+  loadSchema();
 
-  // Word count slider label
-  const slider = document.getElementById("wf-words") as HTMLInputElement;
-  const valLabel = document.getElementById("wf-words-val")!;
-  slider.addEventListener("input", () => {
-    valLabel.textContent = slider.value;
-  });
-
-  // Form submit
   const form = document.getElementById("wf-create") as HTMLFormElement;
   form.addEventListener("submit", handleCreate);
 
@@ -115,35 +92,54 @@ async function loadVoices(): Promise<void> {
   }
 }
 
+async function loadSchema(): Promise<void> {
+  const el = document.getElementById("wf-step-params");
+  const btn = document.getElementById("wf-submit") as HTMLButtonElement | null;
+  if (!el) return;
+  try {
+    const schema = await fetchPipelineSchema();
+    el.innerHTML = renderStepSections(schema.steps);
+    bindSliderLabels(el);
+    schemaReady = true;
+    if (btn) btn.disabled = false;
+  } catch {
+    el.innerHTML = '<div class="error">Failed to load step config</div>';
+  }
+}
+
 async function handleCreate(e: Event): Promise<void> {
   e.preventDefault();
   const premise = (document.getElementById("wf-premise") as HTMLTextAreaElement).value.trim();
   const voice = (document.getElementById("wf-voice") as HTMLSelectElement).value;
-  const words = parseInt((document.getElementById("wf-words") as HTMLInputElement).value, 10);
-  const generateImages = (document.getElementById("wf-images") as HTMLInputElement).checked;
-  const generateMusic = (document.getElementById("wf-music") as HTMLInputElement).checked;
-  const generateSfx = (document.getElementById("wf-sfx") as HTMLInputElement).checked;
-  const stitchVideo = (document.getElementById("wf-stitch") as HTMLInputElement).checked;
   const errEl = document.getElementById("wf-create-error")!;
   const btn = document.getElementById("wf-submit") as HTMLButtonElement;
 
-  if (!premise || !voice) return;
+  if (!premise || !voice || !schemaReady) return;
 
   btn.disabled = true;
   btn.textContent = "Creating...";
   errEl.style.display = "none";
 
   try {
-    const wf = await createWorkflow({
+    const paramsEl = document.getElementById("wf-step-params")!;
+    const stepParams = collectParams(paramsEl);
+
+    // Backfill legacy flat flags for backward compat with existing readers
+    const storyP = stepParams["story_params"] as Record<string, unknown> | undefined;
+    const imageP = stepParams["image_params"] as Record<string, unknown> | undefined;
+    const stitchP = stepParams["stitch_params"] as Record<string, unknown> | undefined;
+    const sfxP = stepParams["sfx_params"] as Record<string, unknown> | undefined;
+
+    const req = {
       premise,
       voice_name: voice,
-      story_params: { target_word_count: words },
-      image_params: { enabled: generateImages },
-      music_params: { enabled: generateMusic },
-      generate_sfx: generateSfx,
-      stitch_params: { enabled: stitchVideo },
-    });
-    // Navigate to the new workflow
+      ...stepParams,
+      target_word_count: storyP?.["target_word_count"] as number | undefined,
+      generate_images: imageP?.["enabled"] as boolean | undefined,
+      stitch_video: stitchP?.["enabled"] as boolean | undefined,
+      generate_sfx: sfxP?.["enabled"] as boolean | undefined,
+    } as CreateWorkflowRequest;
+    const wf = await createWorkflow(req);
     location.hash = `#/workflow/${wf.id}`;
   } catch (err) {
     errEl.textContent = String(err);

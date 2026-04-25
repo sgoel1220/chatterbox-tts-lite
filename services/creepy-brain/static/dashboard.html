@@ -213,6 +213,34 @@
     }
     .checkbox-label input[type="checkbox"] { accent-color: #7eb8da; cursor: pointer; }
 
+    /* Step sections (schema-driven form) */
+    .step-sections { margin: 0.5rem 0; }
+    .step-section { margin-bottom: 0.35rem; }
+    .step-section summary { cursor: pointer; list-style: none; }
+    .step-section summary::-webkit-details-marker { display: none; }
+    .step-summary {
+      display: flex; align-items: center; gap: 0.5rem;
+      padding: 0.4rem 0.6rem;
+      background: #1a1a2e; border: 1px solid #333; border-radius: 4px;
+      font-size: 0.85rem; color: #ccc;
+    }
+    .step-summary:hover { border-color: #555; }
+    .step-summary::before { content: "\25b8"; font-size: 0.7rem; color: #666; transition: transform 0.15s; }
+    details[open] > .step-summary::before { transform: rotate(90deg); }
+    .step-title { flex: 1; }
+    .step-fields {
+      display: flex; flex-wrap: wrap; gap: 0.5rem 1rem;
+      padding: 0.5rem 0.6rem;
+      border: 1px solid #333; border-top: none;
+      border-radius: 0 0 4px 4px; background: #111;
+    }
+    .step-fields .form-field { min-width: 160px; flex: 1; }
+    .step-toggle {
+      padding: 0.4rem 0.6rem;
+      background: #1a1a2e; border: 1px solid #333; border-radius: 4px;
+    }
+    .step-toggle:hover { border-color: #555; }
+
     /* Story review */
     .story-textarea {
       width: 100%;
